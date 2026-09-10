@@ -1,0 +1,3 @@
+# This plugin uses the ComfyUI runtime (PyTorch, aiohttp, folder_paths, comfy_api).
+# No extra pip packages are required beyond a normal ComfyUI install.
+# Optional: an OpenAI-compatible LLM endpoint, or a local CLIP with generate().
