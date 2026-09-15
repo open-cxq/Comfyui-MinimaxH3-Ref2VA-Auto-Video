@@ -147,7 +147,7 @@ const CSS = `
 .h3b-lightbox-close:hover{border-color:#4ea1f3;color:#fff}
 .h3b-empty{color:#777;font-size:11px;padding:6px 2px}
 .h3b-hint{font-size:10px;color:#666;flex:0 0 auto}
-.h3b-lock{display:flex;align-items:center;justify-content:space-between;gap:8px;flex:0 0 auto;padding:6px 2px;border:1px solid #333;border-radius:6px;background:#1a1a1a}
+.h3b-lock{display:flex;align-items:center;justify-content:flex-start;flex-wrap:wrap;gap:8px;flex:0 0 auto;padding:6px 2px;border:1px solid #333;border-radius:6px;background:#1a1a1a}
 .h3b-lock label{display:flex;align-items:center;gap:6px;color:#eee;font-size:12px;font-weight:650;cursor:pointer;user-select:none;flex:0 0 auto}
 .h3b-path{font-size:10px;color:#7a7;word-break:break-all;flex:1;min-width:0}
 .h3b-status{font-size:11px;color:#9ec5ff;min-height:16px}
@@ -186,6 +186,10 @@ const CSS = `
 .h3b-film-meta{font-size:10px;color:#9aa;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 .h3b-film-vol{display:flex;align-items:center;gap:6px;flex:0 0 auto}
 .h3b-film-vol input[type=range]{width:92px;accent-color:#4ea1f3}
+.h3b-film-speed{display:flex;align-items:center;gap:6px;flex:0 0 auto;font-size:10px;color:#9aa}
+.h3b-film-speed select{background:#1a1a1a;color:#ddd;border:1px solid #444;border-radius:4px;padding:2px 4px;font-size:11px}
+.h3b-film-speed label{display:inline-flex;align-items:center;gap:4px;cursor:pointer;user-select:none;white-space:nowrap}
+.h3b-film-speed input[type=checkbox]{accent-color:#4ea1f3;margin:0}
 .h3b-film-result{font-size:10px;color:#8d8;word-break:break-all}
 .h3b-film-skip{font-size:10px;color:#888;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 `;
@@ -418,6 +422,8 @@ function emptyState() {
       scene: [],
       background_audio: "",
       background_audio_volume: 1,
+      film_playback_rate: 1,
+      bgm_follow_speed: false,
       global_prompt: "",
     },
     shots_info: [],
@@ -451,9 +457,70 @@ function extractShotText(text) {
   return raw.replace(/^(overall_soundscape|non_diegetic_music)\s*:[\s\S]*?(?=\n(?:subject_definitions|detailed_description)\s*:|$)/gim, "").trim();
 }
 
+/** Strip and rewrite non_diegetic_music to N/A (custom BGM uploaded → model must not invent score). */
+function forceNonDiegeticMusicNA(text) {
+  let raw = String(text || "").trim();
+  raw = raw
+    .replace(
+      /(^|\n)non_diegetic_music\s*:[\s\S]*?(?=(?:\n(?:overall_soundscape|subject_definitions|detailed_description)\s*:)|\s*$)/gi,
+      "\n"
+    )
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (!/(^|\n)overall_soundscape\s*:/i.test(raw)) {
+    raw =
+      (raw ? raw + "\n\n" : "") +
+      "overall_soundscape:\nAmbient environmental sound continues throughout.";
+  }
+  return (raw + "\n\nnon_diegetic_music:\nN/A").trim();
+}
+
+/** When board has uploaded BGM, keep global_prompt.music = N/A. */
+function syncGlobalPromptForBgm(state) {
+  if (!state || typeof state !== "object") return state;
+  if (!state.global || typeof state.global !== "object") state.global = {};
+  const hasBgm = !!String(state.global.background_audio || "").trim();
+  if (!hasBgm) return state;
+  state.global.global_prompt = forceNonDiegeticMusicNA(state.global.global_prompt || "");
+  return state;
+}
+
+/**
+ * H3 video prompt = per-shot subject/detailed + global soundscape/music.
+ * extractShotText alone drops overall_soundscape / non_diegetic_music — must re-merge here.
+ */
+function buildVideoPrompt(state, shotOrText) {
+  const shotPart =
+    typeof shotOrText === "string"
+      ? extractShotText(shotOrText).trim()
+      : extractShotText((shotOrText && shotOrText.shot) || "").trim();
+  syncGlobalPromptForBgm(state);
+  const globalPart = String((state && state.global && state.global.global_prompt) || "").trim();
+  if (!globalPart) return shotPart;
+  if (!shotPart) return globalPart;
+  return shotPart + "\n\n" + globalPart;
+}
+
 function pickList(primary, fallback) {
   const a = asList(primary);
   return a.length ? a : asList(fallback);
+}
+
+
+function scriptFingerprint(st) {
+  return String((st && st.script_name) || "").trim() + "\n" + String((st && st.script) || "").trim();
+}
+
+function clearStaleBackgroundAudio(current, incoming) {
+  // Mutates current: when script identity changes, take BGM only from incoming.
+  if (!current || !current.global) return current;
+  if (!incoming) return current;
+  if (scriptFingerprint(current) === scriptFingerprint(incoming)) return current;
+  if (!current.global || typeof current.global !== "object") current.global = {};
+  current.global.background_audio = String(
+    (incoming.global && incoming.global.background_audio) || ""
+  ).trim();
+  return current;
 }
 
 function parseState(text) {
@@ -511,6 +578,8 @@ function parseState(text) {
         scene: pickList(g.scene, data.scene),
         background_audio: g.background_audio || data.background_audio || "",
         background_audio_volume: Math.min(2, Math.max(0, Number(g.background_audio_volume ?? 1) || 1)),
+        film_playback_rate: clampFilmPlaybackRate(g.film_playback_rate ?? 1),
+        bgm_follow_speed: !!g.bgm_follow_speed,
         global_prompt: g.global_prompt || data.global_prompt || "",
       },
       shots_info,
@@ -817,7 +886,13 @@ async function withH3LocalQueue(fn) {
 }
 
 async function queuePromptLocal(number, data) {
-  return withH3LocalQueue(() => api.queuePrompt(number, data));
+  return withH3LocalQueue(async () => {
+    try {
+      return await api.queuePrompt(number, data);
+    } catch (err) {
+      throw new Error(formatComfyError(err));
+    }
+  });
 }
 
 function findScriptBoardNode() {
@@ -1266,6 +1341,79 @@ async function fetchHistoryEntry(promptId) {
   }
 }
 
+/** Read board ui/output shots_json from a history (or executed) outputs map. */
+function pickBoardShotsJsonFromOutputs(outputs, boardNodeId) {
+  if (!outputs || typeof outputs !== "object") return "";
+  const want = boardNodeId != null ? String(boardNodeId) : "";
+  const readOne = (nodeOut) => {
+    if (!nodeOut || typeof nodeOut !== "object") return "";
+    const sj = nodeOut.shots_json;
+    if (Array.isArray(sj) && sj.length) return String(sj[0] ?? "").trim();
+    if (typeof sj === "string") return sj.trim();
+    return "";
+  };
+  if (want && outputs[want]) {
+    const hit = readOne(outputs[want]);
+    if (hit) return hit;
+  }
+  for (const [key, nodeOut] of Object.entries(outputs)) {
+    if (want && String(key) !== want) continue;
+    const hit = readOne(nodeOut);
+    if (hit) return hit;
+  }
+  return "";
+}
+
+/**
+ * After stage1 finishes, prefer history/executed board JSON over edit_json widget.
+ * edit_json can still hold the previous run for a few hundred ms (intermittent skip of 生图).
+ */
+async function reloadBoardAfterStage1(boardNode, editW, promptId) {
+  if (!boardNode || typeof boardNode._h3BoardReload !== "function") return "none";
+  let fromEvent = "";
+  const onExecuted = (ev) => {
+    try {
+      const detail = ev && (ev.detail || ev);
+      if (!detail) return;
+      if (promptId && String(detail.prompt_id || "") !== String(promptId)) return;
+      const nodeId = detail.node != null ? detail.node : detail.display_node;
+      if (String(nodeId) !== String(boardNode.id)) return;
+      const hit = pickBoardShotsJsonFromOutputs({ [String(nodeId)]: detail.output || {} }, boardNode.id);
+      if (hit) fromEvent = hit;
+    } catch (_e) {}
+  };
+  try {
+    if (api.addEventListener) api.addEventListener("executed", onExecuted);
+  } catch (_e) {}
+  try {
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline) {
+      if (fromEvent) {
+        boardNode._h3BoardReload(fromEvent, true);
+        return "event";
+      }
+      if (promptId) {
+        const entry = await fetchHistoryEntry(promptId);
+        const fromHist = pickBoardShotsJsonFromOutputs(entry && entry.outputs, boardNode.id);
+        if (fromHist) {
+          boardNode._h3BoardReload(fromHist, true);
+          return "history";
+        }
+      }
+      await sleep(120);
+    }
+    if (editW) {
+      boardNode._h3BoardReload(String(editW.value || ""), true);
+      return "edit_widget";
+    }
+    return "none";
+  } finally {
+    try {
+      if (api.removeEventListener) api.removeEventListener("executed", onExecuted);
+    } catch (_e) {}
+  }
+}
+
 function formatHistoryMessage(m) {
   if (m == null) return "";
   if (typeof m === "string") return m;
@@ -1280,7 +1428,7 @@ function formatHistoryMessage(m) {
   if (type === "execution_interrupted") return "已中断";
   if (type === "execution_error") {
     if (data && typeof data === "object") {
-      return String(data.exception_message || data.message || "执行失败");
+      return formatExecutionDetail(data) || "执行失败";
     }
     return "执行失败";
   }
@@ -1297,6 +1445,102 @@ function formatHistoryMessage(m) {
     return detail ? type + ": " + detail : type;
   }
   return type;
+}
+
+function formatNodeErrors(nodeErrors) {
+  if (!nodeErrors || typeof nodeErrors !== "object") return "";
+  const parts = [];
+  for (const [nodeId, info] of Object.entries(nodeErrors)) {
+    const ctype = String((info && info.class_type) || "节点").trim() || "节点";
+    const errs = (info && Array.isArray(info.errors) && info.errors.length)
+      ? info.errors
+      : [{}];
+    for (const e of errs) {
+      const rawMsg = String((e && (e.message || e.exception_message)) || "").trim();
+      const details = String((e && e.details) || "").trim();
+      let line = "";
+      if (/required input is missing/i.test(rawMsg)) {
+        const miss = details || rawMsg.replace(/^.*missing:\s*/i, "").trim() || "未知输入";
+        line =
+          "#" +
+          nodeId +
+          " " +
+          ctype +
+          " 缺少必填输入「" +
+          miss +
+          "」，请检查该节点连线/模型是否接好";
+      } else if (/value not in list/i.test(rawMsg)) {
+        line =
+          "#" +
+          nodeId +
+          " " +
+          ctype +
+          " 选项无效" +
+          (details ? "：" + details : "") +
+          "，请重新选择模型/文件";
+      } else if (rawMsg) {
+        line = "#" + nodeId + " " + ctype + ": " + rawMsg + (details ? "（" + details + "）" : "");
+      } else {
+        line = "#" + nodeId + " " + ctype + " 校验失败";
+      }
+      parts.push(line);
+    }
+  }
+  return parts.join("\n");
+}
+
+function formatExecutionDetail(detail) {
+  if (!detail || typeof detail !== "object") return "";
+  const id = detail.node_id != null ? "#" + detail.node_id + " " : "";
+  const ctype = String(detail.node_type || detail.class_type || "").trim();
+  const exType = String(detail.exception_type || "").trim();
+  const exMsg = String(detail.exception_message || detail.message || "").trim();
+  const bits = [];
+  if (id || ctype) bits.push((id + ctype).trim());
+  if (exType && exMsg && !exMsg.includes(exType)) bits.push(exType + ": " + exMsg);
+  else if (exMsg) bits.push(exMsg);
+  else if (exType) bits.push(exType);
+  return bits.join(" — ");
+}
+
+/** ComfyUI PromptExecutionError.message 常为固定文案 "Prompt execution failed"，真因在 response.node_errors。 */
+function formatComfyError(err) {
+  if (err == null) return "未知错误";
+  if (typeof err === "string") return err.trim() || "未知错误";
+
+  const resp = err.response || err.promptError || null;
+  if (resp && typeof resp === "object") {
+    const fromNodes = formatNodeErrors(resp.node_errors);
+    if (fromNodes) return fromNodes;
+    const e = resp.error;
+    if (typeof e === "string" && e.trim()) return e.trim();
+    if (e && typeof e === "object") {
+      const msg = String(e.message || "").trim();
+      const details = String(e.details || "").trim();
+      const joined = [msg, details].filter(Boolean).join(": ");
+      if (joined) return joined;
+    }
+  }
+
+  const fromExec = formatExecutionDetail(err);
+  if (fromExec) return fromExec;
+
+  const msg = String(err.message || "").trim();
+  if (msg && !/^prompt execution failed$/i.test(msg)) return msg;
+
+  try {
+    if (typeof err.toString === "function") {
+      const s = String(err.toString()).trim();
+      if (s && s !== "[object Object]" && !/^error$/i.test(s) && !/^prompt execution failed$/i.test(s)) {
+        // toString 常含 class_type / Required input...
+        const rebuilt = formatNodeErrors(err.response && err.response.node_errors);
+        if (rebuilt) return rebuilt;
+        return s.replace(/^Error:\s*/i, "");
+      }
+    }
+  } catch (_e) {}
+
+  return msg || "执行失败";
 }
 
 function isInterruptMessage(text) {
@@ -1345,7 +1589,7 @@ async function waitPromptImages(promptId, saveNodeId) {
       const detail = ev && (ev.detail || ev);
       if (!detail) return;
       if (String(detail.prompt_id || "") !== String(promptId)) return;
-      eventError = String(detail.exception_message || detail.message || "文生图执行失败");
+      eventError = formatExecutionDetail(detail) || String(detail.exception_message || detail.message || "文生图执行失败");
     } catch (_e) {}
   };
   const onInterrupted = (ev) => {
@@ -1780,6 +2024,9 @@ function isStage1OutputNode(node) {
   const ct = String((node && node.class_type) || "");
   if (!ct) return false;
   if (ct === "MinimaxH3SaveJson" || ct === "MinimaxH3ScriptBoard") return true;
+  // 分镜拆解旁路的「编辑文本」预览（剧本文本/H3提示词/全局提示词）也要跑，
+  // 否则 stage1 只沿看板上游执行时这些叶子节点不刷新，看起来像「只有 JSON 有值」。
+  if (ct === "MinimaxH3TextEdit") return true;
   if (/^Preview/i.test(ct)) return true;
   if (ct === "ShowText" || ct === "PreviewAny") return true;
   return false;
@@ -1837,6 +2084,35 @@ function boardHasVideoPipeline(boardNode) {
   return false;
 }
 
+function boardHasShotsJsonLink(boardNode) {
+  const inputs = (boardNode && boardNode.inputs) || [];
+  for (const inp of inputs) {
+    if (!inp) continue;
+    const name = String(inp.name || inp.localized_name || "").toLowerCase();
+    if (name === "shots_json" || name.includes("分镜资产")) {
+      return inp.link != null;
+    }
+  }
+  return false;
+}
+
+/**
+ * 看板 shots_json 输入不是必须。仅在「无上游 + 看板本身也无可用内容」时提示补全。
+ * 有上游连线时交给第一阶段跑通；有本地剧本/分镜则可直接继续。
+ */
+function collectBoardRunMissingHints(boardNode, state) {
+  const miss = [];
+  const hasShots = ((state && state.shots_info) || []).length > 0;
+  const hasScript = !!String((state && state.script) || "").trim();
+  const linked = boardHasShotsJsonLink(boardNode);
+  if (!linked && !hasShots && !hasScript) {
+    miss.push(
+      "剧本/分镜内容（可选连接「分镜资产结果JSON」，或在看板中导入/编辑剧本与分镜）"
+    );
+  }
+  return miss;
+}
+
 async function waitPromptFinished(promptId) {
   const deadline = Date.now() + 30 * 60 * 1000;
   let eventError = null;
@@ -1845,7 +2121,7 @@ async function waitPromptFinished(promptId) {
       const detail = ev && (ev.detail || ev);
       if (!detail) return;
       if (String(detail.prompt_id || "") !== String(promptId)) return;
-      eventError = String(detail.exception_message || detail.message || "执行失败");
+      eventError = formatExecutionDetail(detail) || String(detail.exception_message || detail.message || "执行失败");
     } catch (_e) {}
   };
   const onInterrupted = (ev) => {
@@ -2276,7 +2552,7 @@ async function waitPromptVideos(promptId, saveNodeId) {
       const detail = ev && (ev.detail || ev);
       if (!detail) return;
       if (String(detail.prompt_id || "") !== String(promptId)) return;
-      eventError = String(detail.exception_message || detail.message || "生视频执行失败");
+      eventError = formatExecutionDetail(detail) || String(detail.exception_message || detail.message || "生视频执行失败");
     } catch (_e) {}
   };
   const onInterrupted = (ev) => {
@@ -2402,6 +2678,22 @@ function bgmVolumeOf(state) {
   if (!Number.isFinite(n)) return 1;
   return Math.min(2, Math.max(0, n));
 }
+
+function clampFilmPlaybackRate(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return 1;
+  return Math.min(4, Math.max(0.25, n));
+}
+
+function filmPlaybackRateOf(state) {
+  return clampFilmPlaybackRate(state && state.global && state.global.film_playback_rate);
+}
+
+function bgmFollowSpeedOf(state) {
+  return !!(state && state.global && state.global.bgm_follow_speed);
+}
+
+const FILM_SPEED_PRESETS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
 function clearShotFilmSrcCache(shot, measured) {
   if (!shot) return;
@@ -2602,7 +2894,7 @@ function buildFilmPlaceholderClips(state) {
   return { clips, total: cursor > 0 ? cursor : 10 };
 }
 
-async function composeFilmRequest(videos, bgm, bgmVolume, formalMerge) {
+async function composeFilmRequest(videos, bgm, bgmVolume, formalMerge, speed, bgmFollowSpeed) {
   const res = await api.fetchApi(COMPOSE_FILM_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -2611,6 +2903,8 @@ async function composeFilmRequest(videos, bgm, bgmVolume, formalMerge) {
       bgm: bgm || "",
       bgm_volume: bgmVolume,
       formal_merge: !!formalMerge,
+      speed: clampFilmPlaybackRate(speed == null ? 1 : speed),
+      bgm_follow_speed: !!bgmFollowSpeed,
     }),
   });
   let data = null;
@@ -3057,8 +3351,10 @@ app.registerExtension({
       const node = this;
       const editW = widgetByName(node, "edit_json");
       const lockW = widgetByName(node, "lock_edit");
+      const noAutoW = widgetByName(node, "no_auto_run");
       hideWidget(editW);
       hideWidget(lockW);
+      hideWidget(noAutoW);
 
       const root = el("div", "h3b");
       const dom = this.addDOMWidget("h3_script_board_ui", "div", root, {
@@ -3074,6 +3370,7 @@ app.registerExtension({
         try {
           hideWidget(editW);
           hideWidget(lockW);
+          hideWidget(noAutoW);
           if (dom && dom.width !== undefined) dom.width = undefined;
           const wrap = root.parentElement;
           if (!wrap) return;
@@ -3209,8 +3506,8 @@ app.registerExtension({
           await saveBoardMatedata(state);
           setGenStatus("已生成「" + (item.name || key) + "」", "ok");
         } catch (err) {
-          setGenStatus(String(err && err.message ? err.message : err), "err");
-          alert("生成图片失败: " + (err && err.message ? err.message : err));
+          setGenStatus(formatComfyError(err), "err");
+          alert("生成图片失败: " + formatComfyError(err));
         } finally {
           generating = false;
           render();
@@ -3226,7 +3523,10 @@ app.registerExtension({
         }
         const missing = allAssets(state).filter((e) => !assetImagePath(e.item));
         if (!missing.length) {
-          if (silentIfNone) return true;
+          if (silentIfNone) {
+            setGenStatus("全局运行：素材图已齐全，跳过生图", "ok");
+            return true;
+          }
           alert("没有缺失图片的素材");
           return false;
         }
@@ -3258,9 +3558,9 @@ app.registerExtension({
           setGenStatus((throwOnError ? "全局运行：素材图完成，共 " : "一键生成完成，共 ") + missing.length + " 张", "ok");
           return true;
         } catch (err) {
-          setGenStatus(String(err && err.message ? err.message : err), "err");
+          setGenStatus(formatComfyError(err), "err");
           if (throwOnError) throw err;
-          alert("一键生成失败: " + (err && err.message ? err.message : err));
+          alert("一键生成失败: " + formatComfyError(err));
           return false;
         } finally {
           generating = false;
@@ -3288,7 +3588,7 @@ app.registerExtension({
           }
         }
         const idx = shots.findIndex((x) => Number(x.id) === shotId);
-        const prompt = extractShotText(shot.shot || "").trim();
+        const prompt = buildVideoPrompt(state, shot);
         if (!prompt) {
           alert("当前分镜提示词为空");
           return;
@@ -3344,8 +3644,8 @@ app.registerExtension({
             setGenStatus("已生成分镜 #" + shotId, "ok");
           }
         } catch (err) {
-          setGenStatus(String(err && err.message ? err.message : err), "err");
-          alert("生成分镜失败: " + (err && err.message ? err.message : err));
+          setGenStatus(formatComfyError(err), "err");
+          alert("生成分镜失败: " + formatComfyError(err));
         } finally {
           generating = false;
           render();
@@ -3403,7 +3703,7 @@ app.registerExtension({
             render();
             const pathOut = await runVideoOnce(
               node,
-              extractShotText(shot.shot || "").trim(),
+              buildVideoPrompt(state, shot),
               state.width,
               state.height,
               shot.duration || 5,
@@ -3424,9 +3724,9 @@ app.registerExtension({
           render();
           return true;
         } catch (err) {
-          setGenStatus(String(err && err.message ? err.message : err), "err");
+          setGenStatus(formatComfyError(err), "err");
           if (throwOnError) throw err;
-          alert("一键生成分镜失败: " + (err && err.message ? err.message : err));
+          alert("一键生成分镜失败: " + formatComfyError(err));
           return false;
         } finally {
           generating = false;
@@ -3446,6 +3746,7 @@ app.registerExtension({
           shot.shot = extractShotText(shot.shot || "");
           delete shot.shot_body;
         }
+        syncGlobalPromptForBgm(state);
         setWidgetValue(editW, JSON.stringify(state, null, 2));
         if (app.graph && app.graph.setDirtyCanvas) app.graph.setDirtyCanvas(true, true);
         scheduleSaveBoardMatedata(state);
@@ -3456,6 +3757,8 @@ app.registerExtension({
         if (!pack.clips.length) throw new Error("没有可合成的分镜视频");
         const bgmPath = String((state.global && state.global.background_audio) || "").trim();
         const vol = bgmVolumeOf(state);
+        const playRate = filmPlaybackRateOf(state);
+        const bgmFollow = bgmFollowSpeedOf(state);
         const payload = pack.clips.map((c) => ({
           path: c.path,
           in: c.srcIn || 0,
@@ -3464,7 +3767,7 @@ app.registerExtension({
         filmPlayer.status = "正在合成临时成片…";
         filmPlayer.statusKind = "";
         render();
-        const tmpOut = await composeFilmRequest(payload, bgmPath, vol, false);
+        const tmpOut = await composeFilmRequest(payload, bgmPath, vol, false, playRate, bgmFollow);
         filmPlayer.composedPath = tmpOut;
         const hasSave = findFilmSaveNodes(node).length > 0;
         if (hasSave) {
@@ -3497,7 +3800,7 @@ app.registerExtension({
         filmPlayer.status = "未连接成片 SaveVideo，改用 ffmpeg 写入 merge/…";
         filmPlayer.statusKind = "";
         render();
-        const formalOut = await composeFilmRequest(payload, bgmPath, vol, true);
+        const formalOut = await composeFilmRequest(payload, bgmPath, vol, true, playRate, bgmFollow);
         bustMedia(formalOut);
         state.film_path = formalOut;
         filmPlayer.composedPath = formalOut;
@@ -3512,9 +3815,21 @@ app.registerExtension({
       node._h3RunGlobalFilm = async () => {
         if (generating) throw new Error("看板正在生成，请稍候");
         return withH3LocalQueue(async () => {
+          const preflight = collectBoardRunMissingHints(node, state);
+          if (preflight.length) {
+            const msg =
+              "请补全以下必填参数后再运行：\n- " +
+              preflight.join("\n- ") +
+              "\n\n说明：看板「分镜资产结果JSON」输入不是必须的；也可在看板内直接编辑后再执行。";
+            setGenStatus(msg, "err");
+            render();
+            alert(msg);
+            return { prompt_id: null, film: null, blocked: true };
+          }
           setGenStatus("全局运行：先跑剧本链路（含保存JSON/预览，不含生图生视频）…", "");
           render();
           let promptPack = null;
+          let stage1PromptId = null;
           try {
             if (typeof app.graphToPrompt === "function") promptPack = await app.graphToPrompt();
           } catch (err) {
@@ -3525,10 +3840,36 @@ app.registerExtension({
             const workflow = promptPack.workflow;
             const stage1 = collectGlobalStage1Prompt(output, node);
             if (Object.keys(stage1).length) {
-              const queued = await api.queuePrompt(0, { output: stage1, workflow });
-              const promptId = queued && (queued.prompt_id || queued.promptId);
-              if (promptId) await waitPromptFinished(promptId);
+              let queued = null;
+              try {
+                queued = await api.queuePrompt(0, { output: stage1, workflow });
+              } catch (err) {
+                throw new Error(formatComfyError(err));
+              }
+              stage1PromptId = queued && (queued.prompt_id || queued.promptId);
+              if (stage1PromptId) await waitPromptFinished(stage1PromptId);
             }
+          }
+          // 必须用 stage1 历史/executed 的看板 JSON，不能立刻读 edit_json：
+          // 偶发时 widget 仍是上一轮（已有 bing_image_path），会跳过生图并沿用旧参考图。
+          if (stage1PromptId) {
+            await reloadBoardAfterStage1(node, editW, stage1PromptId);
+          } else if (editW && node._h3BoardReload) {
+            node._h3BoardReload(String(editW.value || ""), true);
+          }
+          if (noAutoW && noAutoW.value) {
+            setGenStatus("已停在看板（不自动运行）：请手动补素材/照片后再点生成", "ok");
+            render();
+            return { prompt_id: null, film: null, stopped_at_board: true };
+          }
+          if (!(state.shots_info || []).length) {
+            const msg =
+              "请补全必填参数：当前没有分镜，无法继续生图/生视频/成片。\n" +
+              "请连接上游分镜 JSON，或在看板中补全剧本与分镜后再运行。";
+            setGenStatus(msg, "err");
+            render();
+            alert(msg);
+            return { prompt_id: null, film: null, blocked: true };
           }
           setGenStatus("全局运行：生成缺失素材图片…", "");
           render();
@@ -3548,13 +3889,13 @@ app.registerExtension({
           render();
           return { prompt_id: null, film: out };
         }).catch((err) => {
-          const msg = String(err && err.message ? err.message : err);
+          const msg = formatComfyError(err);
           setGenStatus(msg, "err");
           render();
           if (isInterruptMessage(msg)) {
             alert("全局运行已中断");
           } else {
-            alert("全局运行失败: " + msg);
+            alert("全局运行失败:\n" + msg);
           }
           throw err;
         });
@@ -4014,7 +4355,12 @@ app.registerExtension({
         if (!audioEl || !bgmPath) return;
         const src = mediaSrc(bgmPath);
         const vol = bgmVolumeOf(state);
+        const rate = filmPlaybackRateOf(state);
+        const follow = bgmFollowSpeedOf(state);
         audioEl.volume = Math.min(1, vol);
+        try {
+          audioEl.playbackRate = follow ? rate : 1;
+        } catch (_e) {}
         if (audioEl.getAttribute("data-path") !== bgmPath) {
           audioEl.setAttribute("data-path", bgmPath);
           audioEl.src = src;
@@ -4024,7 +4370,8 @@ app.registerExtension({
           try {
             const dur = Number(audioEl.duration);
             if (Number.isFinite(dur) && dur > 0) {
-              audioEl.currentTime = globalTime % dur;
+              const t = follow ? globalTime : globalTime / Math.max(0.25, rate);
+              audioEl.currentTime = ((t % dur) + dur) % dur;
             }
           } catch (_e) {}
           if (playing) {
@@ -4036,6 +4383,13 @@ app.registerExtension({
         };
         if (audioEl.readyState >= 1) apply();
         else audioEl.onloadedmetadata = () => apply();
+      };
+
+      const applyFilmPlaybackRate = (videoEl) => {
+        if (!videoEl) return;
+        try {
+          videoEl.playbackRate = filmPlaybackRateOf(state);
+        } catch (_e) {}
       };
 
       const loadFilmClip = (videoEl, clips, index, localTime, autoplay) => {
@@ -4057,8 +4411,10 @@ app.registerExtension({
           const onReady = () => {
             videoEl.muted = !!filmPlayer.muteSource;
             videoEl.volume = 1;
+            applyFilmPlaybackRate(videoEl);
             const afterSeek = () => {
               if (settled) return;
+              applyFilmPlaybackRate(videoEl);
               if (autoplay) {
                 const p = videoEl.play();
                 if (p && p.catch) p.catch(() => {});
@@ -4180,6 +4536,49 @@ app.registerExtension({
         head.appendChild(actions);
         sec.appendChild(head);
 
+        const speedBox = el("div", "h3b-film-speed");
+        speedBox.appendChild(el("span", null, "播放倍速"));
+        const speedSel = document.createElement("select");
+        const curRate = filmPlaybackRateOf(state);
+        const speedOpts = FILM_SPEED_PRESETS.slice();
+        if (!speedOpts.some((x) => Math.abs(x - curRate) < 1e-6)) speedOpts.push(curRate);
+        speedOpts.sort((a, b) => a - b);
+        for (const r of speedOpts) {
+          const opt = document.createElement("option");
+          opt.value = String(r);
+          opt.textContent = (Math.round(r * 100) / 100) + "x";
+          if (Math.abs(r - curRate) < 1e-6) opt.selected = true;
+          speedSel.appendChild(opt);
+        }
+        speedSel.title = "预览与保存成片共用此倍速（例如 2x 会把 10 秒压成 5 秒）";
+        speedSel.addEventListener("change", () => {
+          if (!state.global || typeof state.global !== "object") state.global = {};
+          state.global.film_playback_rate = clampFilmPlaybackRate(speedSel.value);
+          persist();
+          render();
+        });
+        const followLab = document.createElement("label");
+        const followChk = document.createElement("input");
+        followChk.type = "checkbox";
+        followChk.checked = bgmFollowSpeedOf(state);
+        followChk.title = "勾选后背景音乐随画面一起加速；不勾选则 BGM 保持原速，按成片缩短后的时长混音";
+        followChk.addEventListener("change", () => {
+          if (!state.global || typeof state.global !== "object") state.global = {};
+          state.global.bgm_follow_speed = !!followChk.checked;
+          persist();
+          if (filmPlayer._audio) {
+            syncFilmBgm(
+              filmPlayer._audio,
+              String((state.global && state.global.background_audio) || "").trim(),
+              filmPlayer.globalTime,
+              !!filmPlayer.playing
+            );
+          }
+        });
+        followLab.append(followChk, document.createTextNode("BGM跟随加速"));
+        speedBox.append(speedSel, followLab);
+        actions.appendChild(speedBox);
+
         // 先清掉与 video_path 不一致的过期片长（撤销/换片后易串镜）
         reconcileShotFilmSrcCaches(state, filmPlayer.measured);
         // 仅灌入「路径戳记匹配」的缓存
@@ -4268,7 +4667,7 @@ app.registerExtension({
         });
         if (clips.length || skipped.length) {
           sec.appendChild(editRow);
-          sec.appendChild(el("div", "h3b-hint", "点选片段后：把播放头移到要裁的位置，点「去掉前面 / 去掉后面」裁切；停用后不进入成片；左右移只改成片顺序。已裁片段虚线标出；指针落在已裁片段上时金色内发光。蓝框=选中。预览音量上限 100%，超过部分只作用于合成。"));
+          sec.appendChild(el("div", "h3b-hint", "点选片段后：把播放头移到要裁的位置，点「去掉前面 / 去掉后面」裁切；停用后不进入成片；左右移只改成片顺序。已裁片段虚线标出；指针落在已裁片段上时金色内发光。蓝框=选中。预览音量上限 100%，超过部分只作用于合成。播放倍速同时作用于预览与保存成片；「BGM跟随加速」控制背景音乐是否一起变速。"));
         }
 
         if (skipped.length) {
@@ -4391,11 +4790,13 @@ app.registerExtension({
 
         let activeSlot = 0;
         const slots = [videoA, videoB];
+        filmPlayer._slots = slots;
         const applySourceMute = () => {
           const muted = !!filmPlayer.muteSource;
           for (const v of slots) {
             v.muted = muted;
             v.volume = 1;
+            applyFilmPlaybackRate(v);
           }
         };
         const activeVideo = () => slots[activeSlot];
@@ -4586,6 +4987,17 @@ app.registerExtension({
         meta.appendChild(timeLab);
         meta.appendChild(el("span", null, "片段 " + clips.length + " 段"));
         meta.appendChild(el("span", null, bgmPath ? ("BGM：" + Math.round(vol * 100) + "%") : "BGM：未设置"));
+        const rateNow = filmPlaybackRateOf(state);
+        const outDur = total / Math.max(0.25, rateNow);
+        meta.appendChild(
+          el(
+            "span",
+            null,
+            rateNow === 1
+              ? "倍速 1x"
+              : ("倍速 " + rateNow + "x · 成片约 " + formatFilmTime(outDur))
+          )
+        );
         meta.appendChild(zoomLab);
         sec.appendChild(meta);
 
@@ -4849,6 +5261,19 @@ app.registerExtension({
         });
         lockLab.append(lockCb, document.createTextNode("锁定编辑"));
         lockBar.appendChild(lockLab);
+        const noAutoLab = el("label");
+        const noAutoCb = document.createElement("input");
+        noAutoCb.type = "checkbox";
+        noAutoCb.checked = !!(noAutoW && noAutoW.value);
+        noAutoCb.addEventListener("change", () => {
+          if (!noAutoW) return;
+          noAutoW.value = !!noAutoCb.checked;
+          noAutoW.callback?.(noAutoW.value);
+          if (app.graph && app.graph.setDirtyCanvas) app.graph.setDirtyCanvas(true, true);
+        });
+        noAutoLab.append(noAutoCb, document.createTextNode("不自动运行"));
+        noAutoLab.title = "开启后：全局运行只跑到看板为止，方便人工补素材/照片";
+        lockBar.appendChild(noAutoLab);
         root.appendChild(lockBar);
 
         const scroll = el("div", "h3b-scroll");
@@ -4976,6 +5401,7 @@ app.registerExtension({
                 stopBgmPreview();
                 const path = await uploadFile(file, "audio");
                 state.global.background_audio = path;
+                syncGlobalPromptForBgm(state);
                 bustMedia(path);
                 persist();
                 render();
@@ -5013,10 +5439,21 @@ app.registerExtension({
         const promptHead = el("div", "h3b-sec-head");
         promptHead.appendChild(el("div", "h3b-sec-title", "全局提示"));
         promptSec.appendChild(promptHead);
+        syncGlobalPromptForBgm(state);
         promptSec.appendChild(areaInput(state.global.global_prompt || "", (v) => {
           state.global.global_prompt = v;
+          syncGlobalPromptForBgm(state);
           persist();
         }, 4));
+        if (String((state.global && state.global.background_audio) || "").trim()) {
+          promptSec.appendChild(
+            el(
+              "div",
+              "h3b-hint",
+              "已上传背景音乐：生视频时会合并本段；non_diegetic_music 固定为 N/A，禁止模型再生成配乐，仅保留音效与对白。"
+            )
+          );
+        }
         scroll.appendChild(promptSec);
 
         const shotSec = el("div", "h3b-sec");
@@ -5027,7 +5464,24 @@ app.registerExtension({
         genAllShotsBtn.type = "button";
         genAllShotsBtn.disabled = generating;
         genAllShotsBtn.title = "按顺序调度首分镜/非首分镜子流程，生成并写回各分镜视频";
-        genAllShotsBtn.addEventListener("click", () => generateAllShots());
+        genAllShotsBtn.addEventListener("click", () => {
+          const shots = state.shots_info || [];
+          if (!shots.length) {
+            alert("暂无分镜");
+            return;
+          }
+          const hasVideo = shots.filter((s) => String(s.video_path || "").trim()).length;
+          const msg =
+            "确认一键生成全部 " +
+            shots.length +
+            " 个分镜视频？" +
+            (hasVideo
+              ? "\n其中 " + hasVideo + " 个分镜已有视频，将被覆盖。"
+              : "") +
+            "\n将按顺序调度首分镜/非首分镜子流程。";
+          if (!window.confirm(msg)) return;
+          generateAllShots();
+        });
         const addShot = el("button", "h3b-btn primary", "+ 添加分镜");
         addShot.type = "button";
         addShot.addEventListener("click", () => {
@@ -5100,7 +5554,7 @@ app.registerExtension({
         shotSec.appendChild(shotDetail);
         scroll.appendChild(shotSec);
         renderFilmTimeline(scroll);
-        scroll.appendChild(el("div", "h3b-hint", "全局运行：第一阶段跑剧本/拆解/保存JSON/预览/看板（不含生图生视频）→ 再局部逐张素材图 → 逐镜视频 → 成片。成片请把看板「成片视频」接到 SaveVideo；合成后自动送入，不在看板下展示成片文件。单次生图/生视频只跑看板下游。参考图/音与上一镜视频由看板注入。不要删子图内部 video 槽；看板「时长」不要接到 values.a。"));
+        scroll.appendChild(el("div", "h3b-hint", "全局运行：第一阶段跑剧本/拆解/保存JSON/预览/看板（不含生图生视频）→ 再局部逐张素材图 → 逐镜视频 → 成片。开启「不自动运行」时只跑到看板。看板「分镜资产结果JSON」输入不是必须；若无上游且看板也无剧本/分镜，点运行会提示补全。成片请把看板「成片视频」接到 SaveVideo；合成后自动送入，不在看板下展示成片文件。单次生图/生视频只跑看板下游。参考图/音与上一镜视频由看板注入。不要删子图内部 video 槽；看板「时长」不要接到 values.a。"));
 
         const clearWrap = el("div", "h3b-clear-wrap");
         const clearBoardBtn = el("button", "h3b-btn clear-board", "清空看板");
@@ -5149,12 +5603,34 @@ app.registerExtension({
       node._h3BoardSync = syncPanel;
       node._h3BoardReload = (text, force) => {
         const lock = !!(lockW && lockW.value);
+        const prevState = state;
+        const incomingState = parseState(text);
+        if (_matedataSaveTimer) {
+          clearTimeout(_matedataSaveTimer);
+          _matedataSaveTimer = null;
+        }
         if (lock && !force && String((editW && editW.value) || "").trim()) {
           state = parseState(editW.value);
+          if (String(text || "").trim()) {
+            // Keep hand edits, but drop previous-script BGM when upstream script changes.
+            clearStaleBackgroundAudio(state, incomingState);
+            if (!String((state.global && state.global.background_audio) || "").trim()) {
+              stopBgmPreview();
+            }
+            setWidgetValue(editW, JSON.stringify(state, null, 2));
+          }
         } else {
-          state = parseState(text);
+          // Upstream overwrite: use incoming payload; also scrub if script identity flipped.
+          state = incomingState;
+          clearStaleBackgroundAudio(state, incomingState);
+          if (prevState) clearStaleBackgroundAudio(prevState, incomingState);
+          if (!String((state.global && state.global.background_audio) || "").trim()) {
+            stopBgmPreview();
+          }
           setWidgetValue(editW, JSON.stringify(state, null, 2));
         }
+        // Persist cleared/updated BGM so metadata JSON does not keep the old path.
+        scheduleSaveBoardMatedata(state);
         filmPlayer.measured = {};
         reconcileShotFilmSrcCaches(state, filmPlayer.measured);
         if (applyPendingShotVideos(state)) {
@@ -5209,6 +5685,7 @@ app.registerExtension({
       requestAnimationFrame(() => {
         hideWidget(widgetByName(this, "edit_json"));
         hideWidget(widgetByName(this, "lock_edit"));
+        hideWidget(widgetByName(this, "no_auto_run"));
         const editW = widgetByName(this, "edit_json");
         if (this._h3BoardReload) this._h3BoardReload((editW && editW.value) || "", true);
         if (this.size && Number.isFinite(this.size[1]) && this.size[1] > SIZE_MAX_H) {

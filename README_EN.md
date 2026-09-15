@@ -11,6 +11,7 @@ Use a local model or an OpenAI-compatible API to turn a one-line idea or a scrip
 
 `knowledge/ref-en.txt` is the MiniMax H3 Ref2VA full-reference prompt format guide used by shot splitting. The format document originates from MiniMax;.
 
+
 ## Features
 
 - Script writing with a local model or an external API.
@@ -32,6 +33,8 @@ Use a local model or an OpenAI-compatible API to turn a one-line idea or a scrip
 - Compose the final film.
 - Decoupled image and video subgraphs you can customize.
 - Crop video by frame.
+- Support double speed adjustment.
+
 
 ## Contents
 
@@ -43,7 +46,10 @@ Use a local model or an OpenAI-compatible API to turn a one-line idea or a scrip
 - [Resolution table](#resolution-table)
 - [Board](#board)
 - [Example workflow](#example-workflow)
+- [Model Download](#model-download)
+- [Environmental dependence](#environmental-dependence)
 - [Disclaimer](#disclaimer)
+
 
 ## Install
 
@@ -54,9 +60,10 @@ cd ComfyUI/custom_nodes
 git clone https://github.com/open-cxq/Comfyui-MinimaxH3-Ref2VA-Auto-Video.git
 ```
 
-2. Restart ComfyUI.
+1. Restart ComfyUI.
 
 No extra pip packages. Optional: an OpenAI-compatible endpoint, or ComfyUI’s Load CLIP node.
+
 
 ## Settings
 
@@ -68,22 +75,25 @@ ComfyUI **Settings → H3 Ref2VA Auto**:
 
 Key and URL live in settings only and are **not** written into workflow JSON. `OPENAI_API_KEY` is also accepted.
 
+
 ## Nodes
 
-| Node ID | UI name | Role |
-| --- | --- | --- |
-| `MinimaxH3OpenAIAPI` | OpenAI API | External LLM handle |
-| `MinimaxH3ScriptComplete` | Script complete | Story + duration |
-| `MinimaxH3AssetExtract` | Asset extract | Roles / props / scenes |
-| `MinimaxH3ShotSplit` | Shot split | Ref2VA shots from knowledge |
-| `MinimaxH3ScriptConverter` | Script converter | Arbitrary draft → board JSON |
-| `MinimaxH3ScriptBoard` | Script board | Visual editor |
-| `MinimaxH3TextEdit` | Text edit | Lockable text |
-| `MinimaxH3SaveJson` / `LoadJson` | Save / load JSON | `output/.../data` |
-| `MinimaxH3LoadImagePath` / `LoadAudioPath` / `LoadVideoPath` | Load by path | Board injection |
-| `MinimaxH3GetImageRangeFromBatch` | Image range | Slice a batch |
-| `MinimaxH3ImageCount` | Image count | Batch length |
-| `MinimaxH3CropVideoByFrame` | Crop video by frame | Head / tail crop |
+
+| Node ID                                                      | UI name             | Role                         |
+| ------------------------------------------------------------ | ------------------- | ---------------------------- |
+| `MinimaxH3OpenAIAPI`                                         | OpenAI API          | External LLM handle          |
+| `MinimaxH3ScriptComplete`                                    | Script complete     | Story + duration             |
+| `MinimaxH3AssetExtract`                                      | Asset extract       | Roles / props / scenes       |
+| `MinimaxH3ShotSplit`                                         | Shot split          | Ref2VA shots from knowledge  |
+| `MinimaxH3ScriptConverter`                                   | Script converter    | Arbitrary draft → board JSON |
+| `MinimaxH3ScriptBoard`                                       | Script board        | Visual editor                |
+| `MinimaxH3TextEdit`                                          | Text edit           | Lockable text                |
+| `MinimaxH3SaveJson` / `LoadJson`                             | Save / load JSON    | `output/.../data`            |
+| `MinimaxH3LoadImagePath` / `LoadAudioPath` / `LoadVideoPath` | Load by path        | Board injection              |
+| `MinimaxH3GetImageRangeFromBatch`                            | Image range         | Slice a batch                |
+| `MinimaxH3ImageCount`                                        | Image count         | Batch length                 |
+| `MinimaxH3CropVideoByFrame`                                  | Crop video by frame | Head / tail crop             |
+
 
 Typical chain: OpenAI API or CLIP → script complete → asset extract → shot split → board → save JSON. Wire the board’s gen prompt / size / video prompt / film video into your own T2I, H3 video subgraphs, and SaveVideo.
 
@@ -93,20 +103,24 @@ LLM JSON is repaired locally first (including real newlines inside strings). If 
 
 Everything stays on the local ComfyUI machine. This plugin does not add telemetry.
 
-| Use | Path |
-| --- | --- |
-| Uploads and temp files | `input/h3_ref2va_auto/` (including `tmp/`) |
-| Metadata JSON | `output/h3_ref2va_auto/data/metadata-{slug}-{index}.json` |
-| Images / frames | `output/h3_ref2va_auto/images/` |
-| Shot videos | `output/h3_ref2va_auto/shots/` |
-| Merged film | `output/h3_ref2va_auto/merge/` |
+
+| Use                    | Path                                                      |
+| ---------------------- | --------------------------------------------------------- |
+| Uploads and temp files | `input/h3_ref2va_auto/` (including `tmp/`)                |
+| Metadata JSON          | `output/h3_ref2va_auto/data/metadata-{slug}-{index}.json` |
+| Images / frames        | `output/h3_ref2va_auto/images/`                           |
+| Shot videos            | `output/h3_ref2va_auto/shots/`                            |
+| Merged film            | `output/h3_ref2va_auto/merge/`                            |
+
 
 Once the board remembers `metadata_file`, later edits overwrite that file.
+
 
 ## Resolution table
 
 Matches official **Resolution Selector (Size)** (`megapixels × 1024²`, then round each side to a multiple of 32). Full tables: [RESOLUTION.md](RESOLUTION.md).  
 Default `16:9` + `0.4` → `864 × 480`; `0.2` → `608 × 352`.
+
 
 ## Board
 
@@ -116,10 +130,43 @@ Default `16:9` + `0.4` → `864 × 480`; `0.2` → `608 × 352`.
 - Reference audio in asset detail can be previewed; the tile background brightens when a file is bound.
 - Connect **film video** to SaveVideo. That SaveVideo runs on final compose or the last step of a full run, not on every shot.
 
+
 ## Example workflow
 
-See [`example_workflows/h3_ref2va_auto_script_board.json`](example_workflows/h3_ref2va_auto_script_board.json).  
+See `[example_workflows/h3_ref2va_auto_script_board.json](example_workflows/h3_ref2va_auto_script_board.json)`.  
 No API keys and no machine-local paths. After loading, configure the model in settings and attach your image/video subgraphs.
+
+
+## Model Download
+
+Text generation:
+
+- [https://hf-mirror.com/Comfy-Org/Qwen3-VL/tree/main](https://hf-mirror.com/Comfy-Org/Qwen3-VL/tree/main)
+
+Image generation:
+
+- [https://hf-mirror.com/Comfy-Org/Qwen-Image-Edit_ComfyUI/tree/main](https://hf-mirror.com/Comfy-Org/Qwen-Image-Edit_ComfyUI/tree/main)
+- [https://hf-mirror.com/lightx2v/Qwen-Image-Edit-2511-Lightning/tree/main](https://hf-mirror.com/lightx2v/Qwen-Image-Edit-2511-Lightning/tree/main)
+- [https://hf-mirror.com/Comfy-Org/Qwen-Image_ComfyUI/tree/main](https://hf-mirror.com/Comfy-Org/Qwen-Image_ComfyUI/tree/main)
+
+Video generation:
+
+- [https://hf-mirror.com/Comfy-Org/MiniMax-H3/tree/main](https://hf-mirror.com/Comfy-Org/MiniMax-H3/tree/main)
+
+Other models:
+
+- [https://hf-mirror.com/JOKER141/MiniMax-H3-Combat-Base-V2/tree/main](https://hf-mirror.com/JOKER141/MiniMax-H3-Combat-Base-V2/tree/main)
+
+
+## Environmental dependence
+
+ComfyUI version environment:
+-ComfyUI version: 0.35.1 and above [https://github.com/Comfy-Org/ComfyUI](https://github.com/Comfy-Org/ComfyUI)
+
+Workflow dependent nodes:
+-ComfyUI KJNodes 1.5.1 and above [https://github.com/kijai/ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes)
+-ComfyUI Easy Use 1.3.6 and above [https://github.com/yolain/ComfyUI-Easy-Use](https://github.com/yolain/ComfyUI-Easy-Use)
+
 
 ## Disclaimer
 

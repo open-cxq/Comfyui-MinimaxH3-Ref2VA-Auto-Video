@@ -46,13 +46,13 @@
     ],
     "background_audio": "",
     "background_audio_volume": 1.0,
-    "global_prompt": "音效与配乐摘要（英文优先；无配乐则 music=N/A）"
+    "global_prompt": "overall_soundscape:\n…\n\nnon_diegetic_music:\n…"
   },
   "shots_info": [
     {
       "id": 1,
       "duration": 10,
-      "is_first_shots": true,
+      "is_first_shots": true, //根据每个分镜实际时长来定
       "appear": { "roles": [1, 2], "prop": [], "scene": [1] },
       "shot": "subject_definitions:\n…\n\ndetailed_description:\n[Shot 1] …",
       "pre_last_frame_path": "",
@@ -70,17 +70,25 @@
 4. `is_first_shots`：仅第 1 镜为 true，其余 false。
 5. `appear`：按该镜实际出场填 roles/prop/scene 的资产 id（与 global 里 id 对应）。
 6. 每条 `shot` 必须同时含：
-   - `subject_definitions:`（Subject/Picture 与 global 资产名字一致）
-   - `detailed_description:`（`[Shot N] …` 镜头正文；有中文对白则保留；可轻度整理，禁止改因果/删主对白）
+   - `subject_definitions:`（只写 `<Subject N> is the person/dog/prop/scene in <Picture N> 资产名.`；名字后禁止任何外貌/服装/毛色/陈设修饰；与 global 名字一致）
+   - `detailed_description:`（`[Shot N] …` 只写构图、站位、动作、运镜、对白；禁止复述外形）
    - 第 2 镜及以后：若原文有续写/承接语义，保留续写意图；不要发明新戏。
 7. `shots_prompt` 可留空字符串。
-8. global.roles / prop / scene：从全稿去重提取；id 从 1 连续编号。
-9. gen_prompt 规范（与资产提取一致）：
+8. `global.global_prompt` 必须是下面两段（英文优先），禁止不按格式要求写：
+   overall_soundscape:
+   …
+   non_diegetic_music:
+   …
+   - 原文已有这两段时原样保留（可微调，不要删）。`subject_definitions` 只写进各镜 `shot`，不要放进 global_prompt。
+   - 未上传 background_audio ≠ 无配乐。原文写了配乐就必须写入 `non_diegetic_music`。
+   - 仅当媒体路径已提供 background_audio，或用户明确要求无配乐时，`non_diegetic_music` 才写 `N/A`。
+9. global.roles / prop / scene：从全稿去重提取；id 从 1 连续编号。
+10. gen_prompt 规范（与资产提取一致）：
    - 人类角色：East Asian（除非剧情明确其他族裔）+ 外观服装 + pure white background, studio backdrop…
    - 动物角色：禁止 East Asian / 人类服装模板；写物种毛色等 + 白底
    - 道具：白底孤立；场景：不要强制白底
-10. 媒体路径：若用户输入给出了参考图/音频绝对路径，按内容绑定到最匹配资产；无法判断则 ""；禁止编造路径。
-11. 禁止返回数组顶层；禁止 markdown 代码围栏外的解释文字。
+11. 媒体路径：若用户输入给出了参考图/音频绝对路径，按内容绑定到最匹配资产；无法判断则 ""；禁止编造路径。
+12. 禁止返回数组顶层；禁止 markdown 代码围栏外的解释文字。
 
 # 用户输入
 ```

@@ -472,8 +472,77 @@ def global_prompt_text(sections, forbid_bgm):
     )
 
 
+_MUSIC_PLACEHOLDER = re.compile(r"(?is)^\s*(?:music\s*=\s*)?N/?A\s*$")
+
+
+def _is_music_placeholder(text):
+    return not str(text or "").strip() or bool(_MUSIC_PLACEHOLDER.match(str(text or "").strip()))
+
+
+def coerce_global_prompt(llm_text, raw_script="", forbid_bgm=False):
+    """Build overall_soundscape + non_diegetic_music. Recover from source H3 script.
+
+    Uploading no BGM is not the same as no score: keep source music unless forbid_bgm.
+    Reject LLM shortcuts such as `music=N/A`.
+    """
+    llm_sec = split_sections(llm_text or "")
+    src_sec = split_sections(raw_script or "")
+    whole = str(llm_text or "").strip()
+    sound = strip_code_fences(llm_sec.get("overall_soundscape") or "").strip()
+    music = strip_code_fences(llm_sec.get("non_diegetic_music") or "").strip()
+    src_sound = strip_code_fences(src_sec.get("overall_soundscape") or "").strip()
+    src_music = strip_code_fences(src_sec.get("non_diegetic_music") or "").strip()
+
+    if _is_music_placeholder(whole) or not re.search(
+        r"(?im)^(?:overall_soundscape|non_diegetic_music)\s*:", whole
+    ):
+        if src_sound:
+            sound = src_sound
+        if src_music:
+            music = src_music
+    else:
+        if not sound and src_sound:
+            sound = src_sound
+        if _is_music_placeholder(music) and src_music and not _is_music_placeholder(src_music):
+            music = src_music
+
+    if not sound and src_sound:
+        sound = src_sound
+    if _is_music_placeholder(music) and src_music and not _is_music_placeholder(src_music):
+        music = src_music
+
+    return global_prompt_text(
+        {"overall_soundscape": sound, "non_diegetic_music": music},
+        forbid_bgm,
+    )
+
+
 def last_frame_line(n):
     return LAST_FRAME_TMPL.format(n=n)
+
+
+_ANIMAL_HINT = re.compile(
+    r"(狗|猫|犬|鸟|马|动物|dog|cat|puppy|kitten|animal|retriever|samoyed|wolf)",
+    re.I,
+)
+
+
+def _identity_for_subject(item, fallback):
+    """Subject line identity: asset name only (never appearance desc)."""
+    name = str((item or {}).get("name") or "").strip()
+    return name or fallback
+
+
+def _role_kind_label(item):
+    blob = " ".join(
+        str((item or {}).get(k) or "")
+        for k in ("name", "desc", "gen_prompt")
+    )
+    if _ANIMAL_HINT.search(blob):
+        if re.search(r"(狗|犬|dog|puppy|retriever|samoyed)", blob, re.I):
+            return "dog"
+        return "animal"
+    return "person"
 
 
 def subject_block_for_shot(asset, appear, is_first):
@@ -486,32 +555,34 @@ def subject_block_for_shot(asset, appear, is_first):
     mapping = {"roles": [], "prop": [], "scene": []}
     for rid in _ids(appear.get("roles")):
         item = roles.get(rid) or {"name": "role %d" % rid, "desc": ""}
+        identity = _identity_for_subject(item, "character")
+        kind = _role_kind_label(item)
         lines.append(
-            "<Subject %d> is %s in <Picture %d>, %s"
-            % (n, item.get("name") or "character", n, (item.get("desc") or "").strip() or "retain appearance.")
+            "<Subject %d> is the %s in <Picture %d> %s."
+            % (n, kind, n, identity)
         )
         mapping["roles"].append(rid)
         n += 1
     for pid in _ids(appear.get("prop")):
         item = props.get(pid) or {"name": "prop %d" % pid, "desc": ""}
+        identity = _identity_for_subject(item, "prop")
         lines.append(
-            "<Subject %d> is %s in <Picture %d>, %s"
-            % (n, item.get("name") or "prop", n, (item.get("desc") or "").strip() or "retain appearance.")
+            "<Subject %d> is the prop in <Picture %d> %s."
+            % (n, n, identity)
         )
         mapping["prop"].append(pid)
         n += 1
     for sid in _ids(appear.get("scene")):
         item = scenes.get(sid) or {"name": "scene %d" % sid, "desc": ""}
+        identity = _identity_for_subject(item, "scene")
         lines.append(
-            "<Subject %d> is %s in <Picture %d>, %s"
-            % (n, item.get("name") or "scene", n, (item.get("desc") or "").strip() or "retain environment.")
+            "<Subject %d> is the scene in <Picture %d> %s."
+            % (n, n, identity)
         )
         mapping["scene"].append(sid)
         n += 1
-    extra = ""
     if not is_first:
-        extra = last_frame_line(n)
-        lines.append(extra)
+        lines.append(last_frame_line(n))
     return "subject_definitions:\n" + "\n".join(lines), mapping, n if not is_first else None
 
 

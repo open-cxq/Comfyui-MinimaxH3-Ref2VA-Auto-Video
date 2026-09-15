@@ -11,6 +11,7 @@
 
 `knowledge/ref-en.txt` 是 MiniMax H3 Ref2VA 全参考模式的提示词格式说明，供分镜拆解使用；格式文档来源 MiniMax H3 官方 Skill。
 
+
 ## 功能
 
 - 支持剧本编写：本地模型和外部 API 接口。
@@ -32,6 +33,8 @@
 - 支持合成最终成片。
 - 支持功能解耦，可自定义生图和生视频子流程。
 - 支持按帧截取视频。
+- 支持视频倍速调整。
+
 
 ## 目录
 
@@ -43,7 +46,10 @@
 - [分辨率参考](#分辨率参考)
 - [看板](#看板)
 - [示例工作流](#示例工作流)
+- [模型下载](#模型下载)
+- [环境依赖](#环境依赖)
 - [免责声明](#免责声明)
+
 
 ## 安装
 
@@ -54,9 +60,10 @@ cd ComfyUI/custom_nodes
 git clone https://github.com/open-cxq/Comfyui-MinimaxH3-Ref2VA-Auto-Video.git
 ```
 
-2. 重启 ComfyUI。
+1. 重启 ComfyUI。
 
 本插件不额外要求 pip 包，依赖 ComfyUI 自带环境。可选：配置 OpenAI 兼容接口，或连接内置「加载 CLIP」。
+
 
 ## 配置
 
@@ -68,45 +75,53 @@ git clone https://github.com/open-cxq/Comfyui-MinimaxH3-Ref2VA-Auto-Video.git
 
 Key 与 URL **只存在设置里**，不会写入工作流 JSON。也可使用环境变量 `OPENAI_API_KEY`。
 
+
 ## 节点
 
-| 节点 ID | 显示名 | 作用 |
-| --- | --- | --- |
-| `MinimaxH3OpenAIAPI` | OpenAI API | 输出外部 LLM 句柄 |
-| `MinimaxH3ScriptComplete` | 剧本补全 | 整理/补全剧情与时长 |
-| `MinimaxH3AssetExtract` | 资产提取 | 角色/道具/场景 JSON |
-| `MinimaxH3ShotSplit` | 分镜拆解 | 按 knowledge 生成分镜 |
-| `MinimaxH3ScriptConverter` | H3剧本转换器 | 任意稿转看板 JSON |
-| `MinimaxH3ScriptBoard` | 剧本预览与编辑 | 看板 |
-| `MinimaxH3TextEdit` | 编辑文本 | 可锁定手改 |
-| `MinimaxH3SaveJson` / `LoadJson` | 保存/加载 JSON | `output/.../data` |
-| `MinimaxH3LoadImagePath` / `LoadAudioPath` / `LoadVideoPath` | 按路径加载 | 看板局部调度注入 |
-| `MinimaxH3GetImageRangeFromBatch` | 从批次取图像范围 | 取帧 |
-| `MinimaxH3ImageCount` | 图像计数 | 张数 |
-| `MinimaxH3CropVideoByFrame` | 按帧裁剪视频 | 首/尾裁切 |
+
+| 节点 ID                                                        | 显示名        | 作用                |
+| ------------------------------------------------------------ | ---------- | ----------------- |
+| `MinimaxH3OpenAIAPI`                                         | OpenAI API | 输出外部 LLM 句柄       |
+| `MinimaxH3ScriptComplete`                                    | 剧本补全       | 整理/补全剧情与时长        |
+| `MinimaxH3AssetExtract`                                      | 资产提取       | 角色/道具/场景 JSON     |
+| `MinimaxH3ShotSplit`                                         | 分镜拆解       | 按 knowledge 生成分镜  |
+| `MinimaxH3ScriptConverter`                                   | H3剧本转换器    | 任意稿转看板 JSON       |
+| `MinimaxH3ScriptBoard`                                       | 剧本预览与编辑    | 看板                |
+| `MinimaxH3TextEdit`                                          | 编辑文本       | 可锁定手改             |
+| `MinimaxH3SaveJson` / `LoadJson`                             | 保存/加载 JSON | `output/.../data` |
+| `MinimaxH3LoadImagePath` / `LoadAudioPath` / `LoadVideoPath` | 按路径加载      | 看板局部调度注入          |
+| `MinimaxH3GetImageRangeFromBatch`                            | 从批次取图像范围   | 取帧                |
+| `MinimaxH3ImageCount`                                        | 图像计数       | 张数                |
+| `MinimaxH3CropVideoByFrame`                                  | 按帧裁剪视频     | 首/尾裁切             |
+
 
 建议链路：OpenAI API 或 CLIP → 剧本补全 → 资产提取 → 分镜拆解 → 看板 → 保存 JSON。看板的「生图提示词 / 宽高 / 生视频提示词 / 成片视频」接到你自己的文生图、H3 生视频子流程与 SaveVideo。
 
 LLM JSON 会先本地修语法（含字符串内真换行），解析失败再让模型重写，最多 2 次。
 
+
 ## 资产路径
 
 均在本机 ComfyUI 目录下，插件不会上传到互联网。
 
-| 用途 | 路径 |
-| --- | --- |
-| 上传与临时文件 | `input/h3_ref2va_auto/`（含 `tmp/`） |
+
+| 用途       | 路径                                                   |
+| -------- | ---------------------------------------------------- |
+| 上传与临时文件  | `input/h3_ref2va_auto/`（含 `tmp/`）                    |
 | 元数据 JSON | `output/h3_ref2va_auto/data/metadata-{剧名}-{序号}.json` |
-| 生成图 / 抽帧 | `output/h3_ref2va_auto/images/` |
-| 分镜视频 | `output/h3_ref2va_auto/shots/` |
-| 成片 | `output/h3_ref2va_auto/merge/` |
+| 生成图 / 抽帧 | `output/h3_ref2va_auto/images/`                      |
+| 分镜视频     | `output/h3_ref2va_auto/shots/`                       |
+| 成片       | `output/h3_ref2va_auto/merge/`                       |
+
 
 看板记住 `metadata_file` 后会覆盖同一份 JSON，而不是每次另存。
+
 
 ## 分辨率参考
 
 宽高对齐官方 **Resolution Selector (Size)**（`megapixels × 1024²`，再 round 到 32 倍数）。完整分档见 [RESOLUTION.md](RESOLUTION.md)。  
 默认 `16:9` + `0.4` → `864 × 480`；`0.2` → `608 × 352`。
+
 
 ## 看板
 
@@ -116,10 +131,44 @@ LLM JSON 会先本地修语法（含字符串内真换行），解析失败再�
 - 素材详情里的参考音频同样可播放，有文件时背景会变亮。
 - 成片请把看板「成片视频」接到 SaveVideo；合成最终成片或全局运行最后一步才会送入该连线。
 
+
 ## 示例工作流
 
-见 [`example_workflows/h3_ref2va_auto_script_board.json`](example_workflows/h3_ref2va_auto_script_board.json)。  
+见 `[example_workflows/h3_ref2va_auto_script_board.json](example_workflows/h3_ref2va_auto_script_board.json)`。  
 示例不含 API Key、不含本机绝对路径。加载后在设置里配好模型，再接到你的生图/生视频子流程。
+
+## 模型下载
+
+文本生成：
+
+- [https://hf-mirror.com/Comfy-Org/Qwen3-VL/tree/main](https://hf-mirror.com/Comfy-Org/Qwen3-VL/tree/main)
+
+图片生成：
+
+- [https://hf-mirror.com/Comfy-Org/Qwen-Image-Edit_ComfyUI/tree/main](https://hf-mirror.com/Comfy-Org/Qwen-Image-Edit_ComfyUI/tree/main)
+- [https://hf-mirror.com/lightx2v/Qwen-Image-Edit-2511-Lightning/tree/main](https://hf-mirror.com/lightx2v/Qwen-Image-Edit-2511-Lightning/tree/main)
+- [https://hf-mirror.com/Comfy-Org/Qwen-Image_ComfyUI/tree/main](https://hf-mirror.com/Comfy-Org/Qwen-Image_ComfyUI/tree/main)
+
+视频生成：
+
+- [https://hf-mirror.com/Comfy-Org/MiniMax-H3/tree/main](https://hf-mirror.com/Comfy-Org/MiniMax-H3/tree/main)
+
+其他模型：
+
+- [https://hf-mirror.com/JOKER141/MiniMax-H3-Combat-Base-V2/tree/main](https://hf-mirror.com/JOKER141/MiniMax-H3-Combat-Base-V2/tree/main)
+
+
+## 环境依赖
+
+ComfyUI版本环境：
+
+- ComfyUI version: 0.35.1 及以上 [https://github.com/Comfy-Org/ComfyUI](https://github.com/Comfy-Org/ComfyUI)
+
+工作流依赖节点：
+
+- ComfyUI-KJNodes 1.5.1 及以上 [https://github.com/kijai/ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes)
+- ComfyUI-Easy-Use 1.3.6 及以上 [https://github.com/yolain/ComfyUI-Easy-Use](https://github.com/yolain/ComfyUI-Easy-Use)
+
 
 ## 免责声明
 

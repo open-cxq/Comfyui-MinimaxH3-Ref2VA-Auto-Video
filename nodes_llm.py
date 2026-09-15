@@ -551,9 +551,20 @@ class MinimaxH3ScriptConverter(io.ComfyNode):
         audio_paths = save_audios(audios, "ref_audio")
         bg_path = save_audio(background_audio, "background_audio") if background_audio else ""
         catalog = catalog_lines(image_paths, audio_paths, bg_path)
+        if bg_path:
+            bg_rule = (
+                "已提供 background_audio（参考音轨）：global_prompt 的 non_diegetic_music 必须写 N/A，"
+                "禁止再编配乐；overall_soundscape 保留音效。"
+            )
+        else:
+            bg_rule = (
+                "未提供 background_audio。未上传背景音乐不等于无配乐。"
+                "global_prompt 必须写成 overall_soundscape / non_diegetic_music 两段；"
+                "原文有配乐说明就保留，禁止不按格式要求写。"
+            )
         question = (
             "用户输入的分镜/剧本原文（格式不固定，请自行理解后转换）：\n%s\n\n用户提示词：\n%s\n\n"
-            "width=%d\nheight=%d\nratio=%s\nresolution=%s MP\n\n媒体路径：\n%s"
+            "width=%d\nheight=%d\nratio=%s\nresolution=%s MP\n\n%s\n\n媒体路径：\n%s"
             % (
                 raw_script,
                 (prompt or "").strip() or "（空）",
@@ -561,6 +572,7 @@ class MinimaxH3ScriptConverter(io.ComfyNode):
                 height,
                 ratio,
                 resolution,
+                bg_rule,
                 catalog,
             )
         )

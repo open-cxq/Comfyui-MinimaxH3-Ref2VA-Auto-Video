@@ -15,6 +15,14 @@
 - 若已提供 background_audio：non_diegetic_music 必须写 N/A，禁止再编配乐，仅保留音效和对白。
 - 若未提供 background_audio：必须正常撰写 non_diegetic_music（乐器/节奏/起伏），不要因为没上传音频就写 N/A；仅当用户明确要求无配乐时才写 N/A。
 - 非第一镜不要在全文里写死上一镜尾帧的 Subject/Picture 编号，由后续程序按分镜补。
+- 【硬规则】无论有没有参考图：subject_definitions 与 detailed_description 都禁止写形象细节。
+  禁止词类：外貌、服装（毛衣/围巾等）、年龄外貌、发色发型、五官、体型、毛色/物种外形、装修陈设、家具材质颜色等。
+- subject_definitions 只允许「类型 + Picture 绑定 + 资产名字」，名字后不要再跟任何修饰。正确示例：
+  <Subject 1> is the person in <Picture 1> 女主.
+  <Subject 2> is the dog in <Picture 2> 小狗.
+  <Subject 3> is the scene in <Picture 3> 客厅午后阳光.
+  错误示例（禁止）：女主，中年，穿毛衣戴围巾 / 金毛犬，毛茸茸，眼神无辜 / 午后斜阳、暖黄调、家具简洁
+- detailed_description 只用 <Subject N> 写构图、站位、动作、表情变化、走位、运镜、对白与声效；禁止再写穿什么、长什么样、毛什么色、房间陈设什么样。形象细节写进正文会导致成片不跟参考图、人物变样。
 
 ## 用户的问题
 ```

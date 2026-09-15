@@ -17,6 +17,7 @@ class MinimaxH3ScriptBoard(io.ComfyNode):
             category=CATEGORY,
             description=(
                 "根据分镜资产结果 JSON 展示并编辑剧情、素材与分镜。"
+                "「分镜资产结果JSON」输入可选：未连接时可在看板内编辑；点运行时若缺少可执行内容会提示补全。"
                 "可上传/补全参考图与音频。图片/视频生成接口后续再接。"
             ),
             is_output_node=True,
@@ -26,7 +27,7 @@ class MinimaxH3ScriptBoard(io.ComfyNode):
                     display_name="分镜资产结果JSON",
                     force_input=True,
                     optional=True,
-                    tooltip="连接「分镜拆解」或「H3剧本转换器」的分镜资产结果JSON。",
+                    tooltip="可选。连接「分镜拆解」或「H3剧本转换器」的分镜资产结果JSON；未连接时可在看板内编辑后运行。",
                 ),
                 io.String.Input(
                     "edit_json",
@@ -42,6 +43,13 @@ class MinimaxH3ScriptBoard(io.ComfyNode):
                     default=False,
                     socketless=True,
                     tooltip="关闭：每次运行用上游覆盖编辑区。开启：保留表单手改并输出手改内容。",
+                ),
+                io.Boolean.Input(
+                    "no_auto_run",
+                    display_name="不自动运行",
+                    default=False,
+                    socketless=True,
+                    tooltip="关闭：全局运行会在看板后继续生图/生视频/成片。开启：跑到看板后停止，便于人工补素材与照片。",
                 ),
             ],
             outputs=[
@@ -84,21 +92,38 @@ class MinimaxH3ScriptBoard(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, shots_json=None, edit_json="", lock_edit=False):
+    def execute(cls, shots_json=None, edit_json="", lock_edit=False, no_auto_run=False):
+        from .h3_board import apply_incoming_bgm_policy, sanitize_background_audio
         from .h3_path_loaders import load_video_path, placeholder_video
+
+        # no_auto_run is read by the board UI; keep on schema for workflow persistence.
+        _ = bool(no_auto_run)
 
         incoming = str(shots_json or "").strip()
         edited = str(edit_json or "").strip()
         if lock_edit and edited:
-            raw = edited
+            try:
+                data = parse_board_json(edited)
+            except RuntimeError:
+                data = parse_board_json("{}")
+            if incoming:
+                try:
+                    inc = parse_board_json(incoming)
+                except RuntimeError:
+                    inc = None
+                if inc is not None:
+                    data = apply_incoming_bgm_policy(data, inc)
         elif incoming:
-            raw = incoming
+            try:
+                data = parse_board_json(incoming)
+            except RuntimeError:
+                data = parse_board_json("{}")
         else:
-            raw = edited
-        try:
-            data = parse_board_json(raw)
-        except RuntimeError:
-            data = parse_board_json("{}")
+            try:
+                data = parse_board_json(edited)
+            except RuntimeError:
+                data = parse_board_json("{}")
+        data = sanitize_background_audio(data)
         out = dumps_board(data)
         try:
             width = int(data.get("width") or data.get("with") or 864)

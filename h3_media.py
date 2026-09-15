@@ -354,24 +354,126 @@ def _probe_has_audio(ffmpeg: str, path: str) -> bool:
         return True
 
 
-def compose_film(videos, bgm=None, out_dir=None, bgm_volume=1.0, formal_merge=False):
+def _clamp_playback_speed(speed):
+    try:
+        rate = float(speed)
+    except (TypeError, ValueError):
+        rate = 1.0
+    if not math.isfinite(rate) or rate <= 0:
+        rate = 1.0
+    return min(4.0, max(0.25, rate))
+
+
+def _atempo_chain(rate):
+    """Build atempo filter chain; each stage must stay within [0.5, 2.0]."""
+    r = float(rate)
+    parts = []
+    # Push rate into the legal window by stacking 2.0 / 0.5 stages.
+    while r > 2.0 + 1e-9:
+        parts.append("atempo=2.0")
+        r /= 2.0
+    while r < 0.5 - 1e-9:
+        parts.append("atempo=0.5")
+        r /= 0.5
+    parts.append("atempo=%.6f" % r)
+    return ",".join(parts)
+
+
+def _ffmpeg_speed_rewrite(ffmpeg, src, dst, speed):
+    """Time-compress/expand video+audio to `speed` (2.0 => half duration)."""
+    import subprocess
+
+    rate = _clamp_playback_speed(speed)
+    if abs(rate - 1.0) < 1e-6:
+        import shutil as _shutil
+
+        _shutil.copy2(src, dst)
+        return dst
+    has_a = _probe_has_audio(ffmpeg, src)
+    if has_a:
+        filt = "[0:v]setpts=PTS/%.6f[v];[0:a]%s[a]" % (rate, _atempo_chain(rate))
+        cmd = [
+            ffmpeg,
+            "-y",
+            "-i",
+            src,
+            "-filter_complex",
+            filt,
+            "-map",
+            "[v]",
+            "-map",
+            "[a]",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-ar",
+            "44100",
+            "-ac",
+            "2",
+            "-b:a",
+            "192k",
+            "-movflags",
+            "+faststart",
+            dst,
+        ]
+    else:
+        cmd = [
+            ffmpeg,
+            "-y",
+            "-i",
+            src,
+            "-vf",
+            "setpts=PTS/%.6f" % rate,
+            "-an",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            dst,
+        ]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0 or not os.path.isfile(dst):
+        raise RuntimeError("成片倍速处理失败: %s" % ((proc.stderr or proc.stdout or "")[-500:]))
+    return dst
+
+
+def compose_film(
+    videos,
+    bgm=None,
+    out_dir=None,
+    bgm_volume=1.0,
+    formal_merge=False,
+    speed=1.0,
+    bgm_follow_speed=False,
+):
     """Concat board shot videos in order; keep shot audio; optionally mix looping BGM.
 
     clips may be path strings or {path, in, out} dicts (out<=0 means to EOF).
     Default writes a temp file under input/.../tmp. With formal_merge=True (or an
     explicit out_dir), writes under output/.../merge with sequential naming.
+    `speed` > 1 shortens the film (2.0 => half duration). When mixing BGM,
+    `bgm_follow_speed` controls whether BGM is time-stretched with the picture.
     """
     import shutil as _shutil
     import subprocess
     import tempfile
 
     clips = _normalize_film_clips(videos)
+    rate = _clamp_playback_speed(speed)
+    follow_bgm = bool(bgm_follow_speed)
 
     bgm_path = ""
     if bgm:
         bgm_path = os.path.abspath(str(bgm).strip())
         if not os.path.isfile(bgm_path):
-            raise RuntimeError("背景音乐不存在: %s" % bgm)
+            # Stale path from a previous script upload — continue without BGM.
+            print("[H3 Ref2VA Auto] 背景音乐不存在，已跳过: %s" % bgm)
+            bgm_path = ""
     try:
         vol = float(bgm_volume)
     except (TypeError, ValueError):
@@ -538,23 +640,38 @@ def compose_film(videos, bgm=None, out_dir=None, bgm_volume=1.0, formal_merge=Fa
         if proc.returncode != 0 or not os.path.isfile(concat_mp4):
             raise RuntimeError("拼接视频失败: %s" % ((proc.stderr or proc.stdout or "")[-500:]))
 
+        timed_mp4 = concat_mp4
+        if abs(rate - 1.0) >= 1e-6:
+            sped = os.path.join(tmp_dir, "speed.mp4")
+            _ffmpeg_speed_rewrite(ffmpeg, concat_mp4, sped, rate)
+            timed_mp4 = sped
+
         if not bgm_path:
-            _shutil.copy2(concat_mp4, out_path)
+            _shutil.copy2(timed_mp4, out_path)
             return out_path
 
+        bgm_af = (
+            "aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,volume=%.4f"
+            % vol
+        )
+        if follow_bgm and abs(rate - 1.0) >= 1e-6:
+            bgm_af = (
+                "aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,"
+                "%s,volume=%.4f" % (_atempo_chain(rate), vol)
+            )
         cmd_mux = [
             ffmpeg,
             "-y",
             "-i",
-            concat_mp4,
+            timed_mp4,
             "-stream_loop",
             "-1",
             "-i",
             bgm_path,
             "-filter_complex",
             "[0:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[a0];"
-            "[1:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,volume=%.4f[a1];"
-            "[a0][a1]amix=inputs=2:duration=first:dropout_transition=0[a]" % vol,
+            "[1:a]%s[a1];"
+            "[a0][a1]amix=inputs=2:duration=first:dropout_transition=0[a]" % bgm_af,
             "-map",
             "0:v:0",
             "-map",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from typing import Any
@@ -131,6 +132,8 @@ def empty_board_asset() -> dict:
             "scene": [],
             "background_audio": "",
             "background_audio_volume": 1.0,
+            "film_playback_rate": 1.0,
+            "bgm_follow_speed": False,
             "global_prompt": "",
         },
         "shots_info": [],
@@ -183,6 +186,14 @@ def normalize_board_asset(data: dict) -> dict:
     except (TypeError, ValueError):
         bgm_vol = 1.0
     g["background_audio_volume"] = min(2.0, max(0.0, bgm_vol))
+    try:
+        play_rate = float(g_in.get("film_playback_rate", 1.0))
+    except (TypeError, ValueError):
+        play_rate = 1.0
+    if not math.isfinite(play_rate) or play_rate <= 0:
+        play_rate = 1.0
+    g["film_playback_rate"] = min(4.0, max(0.25, play_rate))
+    g["bgm_follow_speed"] = bool(g_in.get("bgm_follow_speed", False))
     g["global_prompt"] = str(
         g_in.get("global_prompt") or data.get("global_prompt") or ""
     ).strip()
@@ -244,6 +255,7 @@ def finalize_script_convert(
     """把 LLM 转换结果规范成看板可用的分镜资产 JSON。"""
     from .h3_parse import (
         build_shot_prompt,
+        coerce_global_prompt,
         ensure_continuation,
         extract_shot_text,
         subject_block_for_shot,
@@ -275,6 +287,11 @@ def finalize_script_convert(
     g = _as_dict(data.get("global"))
     if bg_path and not str(g.get("background_audio") or "").strip():
         g["background_audio"] = str(bg_path).strip()
+    g["global_prompt"] = coerce_global_prompt(
+        g.get("global_prompt") or data.get("global_prompt") or "",
+        raw_script=raw_script,
+        forbid_bgm=bool(str(g.get("background_audio") or "").strip() or bg_path),
+    )
     data["global"] = g
 
     board = normalize_board_asset(data)
@@ -316,6 +333,69 @@ def finalize_script_convert(
         board["duration"] = max(1, int(data.get("duration") or 10))
     board["shots_info"] = shots
     return board
+
+
+def script_fingerprint(data: dict) -> str:
+    """Identify a board payload by script name + body for stale-media checks."""
+    if not isinstance(data, dict):
+        return ""
+    name = str(data.get("script_name") or "").strip()
+    body = str(data.get("script") or "").strip()
+    return name + "\n" + body
+
+
+def _force_non_diegetic_music_na(text: str) -> str:
+    raw = str(text or "").strip()
+    raw = re.sub(
+        r"(?is)(?:^|\n)non_diegetic_music\s*:[\s\S]*?(?=(?:\n(?:overall_soundscape|subject_definitions|detailed_description)\s*:)|\Z)",
+        "\n",
+        raw,
+    ).strip()
+    raw = re.sub(r"\n{3,}", "\n\n", raw).strip()
+    if not re.search(r"(?im)^overall_soundscape\s*:", raw):
+        raw = (
+            (raw + "\n\n" if raw else "")
+            + "overall_soundscape:\nAmbient environmental sound continues throughout."
+        )
+    return (raw + "\n\nnon_diegetic_music:\nN/A").strip()
+
+
+def sanitize_background_audio(data: dict) -> dict:
+    """Drop background_audio when the path is empty or the file is gone.
+
+    When a valid custom BGM path remains, force global_prompt.non_diegetic_music to N/A
+    so video generation does not invent a score.
+    """
+    if not isinstance(data, dict):
+        return data
+    g = data.get("global")
+    if not isinstance(g, dict):
+        return data
+    bg = str(g.get("background_audio") or "").strip()
+    if not bg or not os.path.isfile(bg):
+        g["background_audio"] = ""
+    else:
+        g["background_audio"] = bg
+        g["global_prompt"] = _force_non_diegetic_music_na(g.get("global_prompt") or "")
+    return data
+
+
+def apply_incoming_bgm_policy(current: dict, incoming: dict) -> dict:
+    """When upstream script changes, do not keep the previous board BGM."""
+    if not isinstance(current, dict):
+        return current
+    if not isinstance(incoming, dict):
+        return current
+    if script_fingerprint(current) == script_fingerprint(incoming):
+        return current
+    g = current.setdefault("global", {})
+    if not isinstance(g, dict):
+        current["global"] = {}
+        g = current["global"]
+    inc_g = incoming.get("global") if isinstance(incoming.get("global"), dict) else {}
+    bg = str((inc_g or {}).get("background_audio") or incoming.get("background_audio") or "").strip()
+    g["background_audio"] = bg
+    return sanitize_background_audio(current)
 
 
 def dumps_board(data: dict) -> str:

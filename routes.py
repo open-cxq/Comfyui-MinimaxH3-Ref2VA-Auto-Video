@@ -385,14 +385,24 @@ def register_routes():
         bgm = str(body.get("bgm") or "").strip()
         if bgm:
             if not is_allowed_media_path(bgm):
-                return web.json_response({"error": "非法或不存在的背景音乐路径"}, status=400)
-            bgm = os.path.abspath(bgm)
+                # Stale board BGM from a previous script — compose without it.
+                print("[H3 Ref2VA Auto] 背景音乐路径无效或文件不存在，已跳过: %s" % bgm)
+                bgm = None
+            else:
+                bgm = os.path.abspath(bgm)
         else:
             bgm = None
         try:
             bgm_volume = float(body.get("bgm_volume", 1.0))
         except (TypeError, ValueError):
             bgm_volume = 1.0
+        try:
+            speed = float(body.get("speed", body.get("playback_rate", 1.0)))
+        except (TypeError, ValueError):
+            speed = 1.0
+        bgm_follow_speed = bool(
+            body.get("bgm_follow_speed", body.get("bgm_follow_playback_rate", False))
+        )
 
         formal_merge = bool(body.get("formal_merge"))
         try:
@@ -404,6 +414,8 @@ def register_routes():
                 out_dir=None,
                 bgm_volume=bgm_volume,
                 formal_merge=formal_merge,
+                speed=speed,
+                bgm_follow_speed=bgm_follow_speed,
             )
         except Exception as exc:
             return web.json_response({"error": "合成失败: %s" % exc}, status=500)
