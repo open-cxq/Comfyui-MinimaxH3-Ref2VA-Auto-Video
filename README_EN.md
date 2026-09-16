@@ -9,7 +9,7 @@ Use a local model or an OpenAI-compatible API to turn a one-line idea or a scrip
 - Repository: [github.com/open-cxq/Comfyui-MinimaxH3-Ref2VA-Auto-Video](https://github.com/open-cxq/Comfyui-MinimaxH3-Ref2VA-Auto-Video)
 - 中文说明：[README.md](README.md)
 
-`knowledge/ref-en.txt` is the MiniMax H3 Ref2VA full-reference prompt format guide used by shot splitting. The format document originates from MiniMax;.
+`knowledge/ref-en.txt` is the MiniMax H3 Ref2VA full-reference prompt format guide used by shot splitting. The format document originates from MiniMax, and made minor modifications to it.
 
 
 ## Features
