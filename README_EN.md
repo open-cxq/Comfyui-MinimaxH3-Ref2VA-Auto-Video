@@ -45,7 +45,7 @@ Use a local model or an OpenAI-compatible API to turn a one-line idea or a scrip
 - [Asset paths](#asset-paths)
 - [Resolution table](#resolution-table)
 - [Board](#board)
-- [Example workflow](#example-workflow)
+- [Example workflows](#example-workflows)
 - [Model Download](#model-download)
 - [Environmental dependence](#environmental-dependence)
 - [Disclaimer](#disclaimer)
@@ -131,10 +131,17 @@ Default `16:9` + `0.4` → `864 × 480`; `0.2` → `608 × 352`.
 - Connect **film video** to SaveVideo. That SaveVideo runs on final compose or the last step of a full run, not on every shot.
 
 
-## Example workflow
+## Example workflows
 
-See `[example_workflows/h3_ref2va_auto_script_board.json](example_workflows/h3_ref2va_auto_script_board.json)`.  
-No API keys and no machine-local paths. After loading, configure the model in settings and attach your image/video subgraphs.
+Workflows live in `example_workflows/`. They include no API keys and no machine-local paths. After loading, configure the model in settings.
+
+| File | Use |
+| ---- | --- |
+| [h3_ref2va_auto_full.json](example_workflows/h3_ref2va_auto_full.json) | Full video-generation workflow |
+| [h3_ref2va_auto_one.json](example_workflows/h3_ref2va_auto_one.json) | One-line fully automatic video generation |
+| [h3_ref2va_auto_script.json](example_workflows/h3_ref2va_auto_script.json) | Generate video from an H3 script prompt |
+| [h3_ref2va_auto_base.json](example_workflows/h3_ref2va_auto_base.json) | Base workflow: edit the script by hand, then generate video |
+| [h3_ref2va_auto_file.json](example_workflows/h3_ref2va_auto_file.json) | Generate video from a saved shot-asset JSON file |
 
 
 ## Model Download

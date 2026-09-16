@@ -134,8 +134,15 @@ LLM JSON 会先本地修语法（含字符串内真换行），解析失败再�
 
 ## 示例工作流
 
-见 `[example_workflows/h3_ref2va_auto_script_board.json](example_workflows/h3_ref2va_auto_script_board.json)`。  
-示例不含 API Key、不含本机绝对路径。加载后在设置里配好模型，再接到你的生图/生视频子流程。
+示例在 `example_workflows/`。不含 API Key、不含本机绝对路径。加载后在设置里配好模型。
+
+| 文件 | 用途 |
+| ---- | ---- |
+| [h3_ref2va_auto_full.json](example_workflows/h3_ref2va_auto_full.json) | 生视频完整版 |
+| [h3_ref2va_auto_one.json](example_workflows/h3_ref2va_auto_one.json) | 一句话全自动生视频版 |
+| [h3_ref2va_auto_script.json](example_workflows/h3_ref2va_auto_script.json) | 根据 H3 剧本提示词生视频版 |
+| [h3_ref2va_auto_base.json](example_workflows/h3_ref2va_auto_base.json) | 基础版，靠手动编辑剧本生视频 |
+| [h3_ref2va_auto_file.json](example_workflows/h3_ref2va_auto_file.json) | 通过资产剧本文件生视频版 |
 
 ## 模型下载
 

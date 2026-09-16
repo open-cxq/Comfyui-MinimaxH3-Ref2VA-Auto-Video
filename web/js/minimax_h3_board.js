@@ -3654,6 +3654,7 @@ app.registerExtension({
 
       const generateAllShots = async (opts) => {
         const throwOnError = !!(opts && opts.throwOnError);
+        const skipExisting = !!(opts && opts.skipExisting);
         if (generating) {
           if (throwOnError) throw new Error("看板正在生成，请稍候");
           return false;
@@ -3664,7 +3665,18 @@ app.registerExtension({
           alert("暂无分镜");
           return false;
         }
-        const empty = shots.filter((s) => !extractShotText(s.shot || "").trim());
+        const todoIdx = [];
+        for (let i = 0; i < shots.length; i++) {
+          if (skipExisting && String(shots[i].video_path || "").trim()) continue;
+          todoIdx.push(i);
+        }
+        if (skipExisting && !todoIdx.length) {
+          if (throwOnError) throw new Error("没有剩余未生成的分镜");
+          alert("没有剩余未生成的分镜");
+          return false;
+        }
+        const checkShots = skipExisting ? todoIdx.map((i) => shots[i]) : shots;
+        const empty = checkShots.filter((s) => !extractShotText(s.shot || "").trim());
         if (empty.length) {
           const msg = "以下分镜缺少提示词：\n" + empty.map((s) => "#" + s.id).join(", ");
           if (throwOnError) throw new Error(msg);
@@ -3672,8 +3684,11 @@ app.registerExtension({
           return false;
         }
         generating = true;
+        const total = skipExisting ? todoIdx.length : shots.length;
+        let done = 0;
         try {
           for (let i = 0; i < shots.length; i++) {
+            if (skipExisting && String(shots[i].video_path || "").trim()) continue;
             const shot = shots[i];
             const isFirst = shotIsColdStart(shots, i);
             const prevVideo = shotPrevVideoPath(shots, i);
@@ -3684,8 +3699,10 @@ app.registerExtension({
                   : ("分镜 #" + shot.id + " 缺少上一镜视频")
               );
             }
+            done += 1;
             setGenStatus(
-              "一键生成分镜 " + (i + 1) + "/" + shots.length + "：#" + shot.id +
+              (skipExisting ? "生成剩余分镜 " : "一键生成分镜 ") +
+              done + "/" + total + "：#" + shot.id +
               "（" + (isFirst ? "首分镜" : "非首镜") + "）…",
               ""
             );
@@ -3715,12 +3732,17 @@ app.registerExtension({
             if (commit.detached) {
               setGenStatus(
                 "分镜 #" + shot.id + " 已生成并暂存（切回本工作流后写入预览） " +
-                (i + 1) + "/" + shots.length,
+                done + "/" + total,
                 "ok"
               );
             }
           }
-          setGenStatus("一键生成全部分镜完成，共 " + shots.length + " 个", "ok");
+          setGenStatus(
+            skipExisting
+              ? ("剩余分镜生成完成，共 " + total + " 个")
+              : ("一键生成全部分镜完成，共 " + shots.length + " 个"),
+            "ok"
+          );
           render();
           return true;
         } catch (err) {
@@ -5482,6 +5504,32 @@ app.registerExtension({
           if (!window.confirm(msg)) return;
           generateAllShots();
         });
+        const genRestShotsBtn = el("button", "h3b-btn", generating ? "生成中…" : "一键生成剩余分镜");
+        genRestShotsBtn.type = "button";
+        genRestShotsBtn.disabled = generating;
+        genRestShotsBtn.title = "跳过已有视频的分镜，只按顺序生成还没有成片的分镜";
+        genRestShotsBtn.addEventListener("click", () => {
+          const shots = state.shots_info || [];
+          if (!shots.length) {
+            alert("暂无分镜");
+            return;
+          }
+          const rest = shots.filter((s) => !String(s.video_path || "").trim());
+          if (!rest.length) {
+            alert("没有剩余未生成的分镜");
+            return;
+          }
+          const skip = shots.length - rest.length;
+          const msg =
+            "确认生成剩余 " +
+            rest.length +
+            " 个分镜视频？" +
+            (skip ? "\n将跳过已有视频的 " + skip + " 个分镜。" : "") +
+            "\n#" +
+            rest.map((s) => s.id).join("、#");
+          if (!window.confirm(msg)) return;
+          generateAllShots({ skipExisting: true });
+        });
         const addShot = el("button", "h3b-btn primary", "+ 添加分镜");
         addShot.type = "button";
         addShot.addEventListener("click", () => {
@@ -5505,6 +5553,7 @@ app.registerExtension({
         });
         shotActions.appendChild(addShot);
         shotActions.appendChild(genAllShotsBtn);
+        shotActions.appendChild(genRestShotsBtn);
         shotHead.appendChild(shotActions);
         shotSec.appendChild(shotHead);
 
