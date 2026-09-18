@@ -74,7 +74,7 @@
    - `detailed_description:`（`[Shot N] …` 只写构图、站位、动作、运镜、对白；禁止复述外形）
    - 第 2 镜及以后：若原文有续写/承接语义，保留续写意图；不要发明新戏。
 7. `shots_prompt` 可留空字符串。
-8. `global.global_prompt` 必须是下面两段（英文优先），禁止不按格式要求写：
+8. `global.global_prompt` 必须是下面两段（且必须为英文版，如果是中文要翻译为英文），禁止不按格式要求写：
    overall_soundscape:
    …
    non_diegetic_music:
