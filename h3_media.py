@@ -450,6 +450,7 @@ def compose_film(
     formal_merge=False,
     speed=1.0,
     bgm_follow_speed=False,
+    mute_source=False,
 ):
     """Concat board shot videos in order; keep shot audio; optionally mix looping BGM.
 
@@ -458,6 +459,7 @@ def compose_film(
     explicit out_dir), writes under output/.../merge with sequential naming.
     `speed` > 1 shortens the film (2.0 => half duration). When mixing BGM,
     `bgm_follow_speed` controls whether BGM is time-stretched with the picture.
+    `mute_source` drops shot audio. With BGM, the film is BGM only; otherwise silent.
     """
     import shutil as _shutil
     import subprocess
@@ -466,6 +468,7 @@ def compose_film(
     clips = _normalize_film_clips(videos)
     rate = _clamp_playback_speed(speed)
     follow_bgm = bool(bgm_follow_speed)
+    drop_source = bool(mute_source)
 
     bgm_path = ""
     if bgm:
@@ -503,7 +506,7 @@ def compose_film(
         parts = []
         for i, clip in enumerate(clips):
             part = os.path.join(tmp_dir, "c_%02d.mp4" % i)
-            has_a = _probe_has_audio(ffmpeg, clip["path"])
+            has_a = False if drop_source else _probe_has_audio(ffmpeg, clip["path"])
             dur = None
             if clip["end"] > clip["start"] + 0.05:
                 dur = clip["end"] - clip["start"]
@@ -648,6 +651,47 @@ def compose_film(
 
         if not bgm_path:
             _shutil.copy2(timed_mp4, out_path)
+            return out_path
+
+        if drop_source:
+            bgm_af = (
+                "aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,volume=%.4f"
+                % vol
+            )
+            if follow_bgm and abs(rate - 1.0) >= 1e-6:
+                bgm_af = (
+                    "aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,"
+                    "%s,volume=%.4f" % (_atempo_chain(rate), vol)
+                )
+            cmd_mux = [
+                ffmpeg,
+                "-y",
+                "-i",
+                timed_mp4,
+                "-stream_loop",
+                "-1",
+                "-i",
+                bgm_path,
+                "-filter_complex",
+                "[1:a]%s[a]" % bgm_af,
+                "-map",
+                "0:v:0",
+                "-map",
+                "[a]",
+                "-c:v",
+                "copy",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                "-shortest",
+                "-movflags",
+                "+faststart",
+                out_path,
+            ]
+            proc = subprocess.run(cmd_mux, capture_output=True, text=True)
+            if proc.returncode != 0 or not os.path.isfile(out_path):
+                raise RuntimeError("混入背景音乐失败: %s" % ((proc.stderr or proc.stdout or "")[-500:]))
             return out_path
 
         bgm_af = (

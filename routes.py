@@ -403,6 +403,7 @@ def register_routes():
         bgm_follow_speed = bool(
             body.get("bgm_follow_speed", body.get("bgm_follow_playback_rate", False))
         )
+        mute_source = bool(body.get("mute_source", body.get("muteSource", False)))
 
         formal_merge = bool(body.get("formal_merge"))
         try:
@@ -416,6 +417,7 @@ def register_routes():
                 formal_merge=formal_merge,
                 speed=speed,
                 bgm_follow_speed=bgm_follow_speed,
+                mute_source=mute_source,
             )
         except Exception as exc:
             return web.json_response({"error": "合成失败: %s" % exc}, status=500)

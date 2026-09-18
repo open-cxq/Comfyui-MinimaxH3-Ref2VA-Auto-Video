@@ -2894,7 +2894,7 @@ function buildFilmPlaceholderClips(state) {
   return { clips, total: cursor > 0 ? cursor : 10 };
 }
 
-async function composeFilmRequest(videos, bgm, bgmVolume, formalMerge, speed, bgmFollowSpeed) {
+async function composeFilmRequest(videos, bgm, bgmVolume, formalMerge, speed, bgmFollowSpeed, muteSource) {
   const res = await api.fetchApi(COMPOSE_FILM_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -2905,6 +2905,7 @@ async function composeFilmRequest(videos, bgm, bgmVolume, formalMerge, speed, bg
       formal_merge: !!formalMerge,
       speed: clampFilmPlaybackRate(speed == null ? 1 : speed),
       bgm_follow_speed: !!bgmFollowSpeed,
+      mute_source: !!muteSource,
     }),
   });
   let data = null;
@@ -3781,15 +3782,18 @@ app.registerExtension({
         const vol = bgmVolumeOf(state);
         const playRate = filmPlaybackRateOf(state);
         const bgmFollow = bgmFollowSpeedOf(state);
+        const muteSource = !!filmPlayer.muteSource;
         const payload = pack.clips.map((c) => ({
           path: c.path,
           in: c.srcIn || 0,
           out: c.srcOut || 0,
         }));
-        filmPlayer.status = "正在合成临时成片…";
+        filmPlayer.status = muteSource
+          ? (bgmPath ? "正在合成临时成片（已关原声，仅 BGM）…" : "正在合成临时成片（已关原声）…")
+          : "正在合成临时成片…";
         filmPlayer.statusKind = "";
         render();
-        const tmpOut = await composeFilmRequest(payload, bgmPath, vol, false, playRate, bgmFollow);
+        const tmpOut = await composeFilmRequest(payload, bgmPath, vol, false, playRate, bgmFollow, muteSource);
         filmPlayer.composedPath = tmpOut;
         const hasSave = findFilmSaveNodes(node).length > 0;
         if (hasSave) {
@@ -3822,7 +3826,7 @@ app.registerExtension({
         filmPlayer.status = "未连接成片 SaveVideo，改用 ffmpeg 写入 merge/…";
         filmPlayer.statusKind = "";
         render();
-        const formalOut = await composeFilmRequest(payload, bgmPath, vol, true, playRate, bgmFollow);
+        const formalOut = await composeFilmRequest(payload, bgmPath, vol, true, playRate, bgmFollow, muteSource);
         bustMedia(formalOut);
         state.film_path = formalOut;
         filmPlayer.composedPath = formalOut;
@@ -4551,7 +4555,7 @@ app.registerExtension({
           filmPlayer.muteSource ? "原声已关" : "关闭原声"
         );
         muteSrcBtn.type = "button";
-        muteSrcBtn.title = "预览时开关分镜原声（不影响 BGM；合成成片始终保留原声）";
+        muteSrcBtn.title = "关闭后预览和合成成片都不保留分镜原声；有 BGM 时成片只留背景音乐";
         const composeBtn = el("button", "h3b-btn primary", "合成最终成片");
         composeBtn.type = "button";
         actions.append(playBtn, restartBtn, muteSrcBtn, composeBtn);

@@ -355,6 +355,36 @@ def appear_from_shot_text(asset, body):
     return appear
 
 
+def script_time_spans(script):
+    """Parse labeled ranges like 0–8秒 / 8-16秒 into (start, end, duration) list."""
+    spans = []
+    for a, b in re.findall(
+        r"(\d+(?:\.\d+)?)\s*[–—\-至到]\s*(\d+(?:\.\d+)?)\s*秒",
+        str(script or ""),
+    ):
+        start = float(a)
+        end = float(b)
+        if end <= start:
+            continue
+        spans.append((start, end, max(1, int(round(end - start)))))
+    return spans
+
+
+def resolve_total_duration(script, duration, default=10):
+    """Prefer script timeline end when asset.duration is under-reported (e.g. default 10)."""
+    try:
+        total = int(duration or 0)
+    except (TypeError, ValueError):
+        total = 0
+    spans = script_time_spans(script)
+    span_sum = sum(d for _, _, d in spans) if spans else 0
+    script_end = _max_timecode_seconds(script)
+    resolved = max(total, script_end, span_sum)
+    if resolved > 0:
+        return resolved
+    return max(1, int(default or 10))
+
+
 def asset_brief_for_shot_llm(asset):
     """Compact asset for shot-split LLM: no script dump, no file paths."""
     g = asset.get("global") if isinstance(asset.get("global"), dict) else {}
@@ -371,9 +401,10 @@ def asset_brief_for_shot_llm(asset):
             })
         return out
 
+    script = str(asset.get("script") or "")
     return {
         "script_name": str(asset.get("script_name") or "").strip(),
-        "duration": int(asset.get("duration") or 10),
+        "duration": resolve_total_duration(script, asset.get("duration")),
         "roles": items("roles"),
         "prop": items("prop"),
         "scene": items("scene"),
@@ -695,8 +726,12 @@ def durations_from_cuts(texts, total):
         starts.append(float(t))
     if any(starts[i] <= starts[i - 1] for i in range(1, n)):
         return None
+    total = max(1, int(total))
+    # If asset total was under-reported, extend from last cut using average gap.
     if starts[-1] >= float(total):
-        return None
+        gaps = [starts[i] - starts[i - 1] for i in range(1, n)]
+        avg = (sum(gaps) / len(gaps)) if gaps else 1.0
+        total = max(total, int(round(starts[-1] + max(1.0, avg))))
     durs = []
     for i, st in enumerate(starts):
         end = float(total) if i == n - 1 else starts[i + 1]
@@ -705,26 +740,31 @@ def durations_from_cuts(texts, total):
 
 
 def durations_from_script(script, n, total):
-    spans = re.findall(
-        r"(\d+(?:\.\d+)?)\s*[–—\-至到]\s*(\d+(?:\.\d+)?)\s*秒",
-        str(script or ""),
-    )
+    spans = script_time_spans(script)
     if len(spans) != n:
         return None
-    durs = []
-    for a, b in spans:
-        durs.append(max(1, int(round(float(b) - float(a)))))
-    return _fit_durations(durs, total)
+    durs = [d for _, _, d in spans]
+    use_total = max(1, int(total), sum(durs))
+    if sum(durs) == use_total:
+        return durs
+    return _fit_durations(durs, use_total)
 
 
 def clamp_shot_durations(shots, total, script=""):
-    total = max(1, int(total))
+    spans = script_time_spans(script)
+    span_sum = sum(d for _, _, d in spans) if spans else 0
+    script_end = _max_timecode_seconds(script)
+    total = max(1, int(total or 0), script_end, span_sum)
     n = max(1, len(shots))
     if n == 1:
         shots[0]["duration"] = total
         return shots
     texts = [str(s.get("shot") or "") for s in shots]
-    durs = durations_from_cuts(texts, total)
+    durs = None
+    if len(spans) == n:
+        durs = durations_from_script(script, n, total)
+    if durs is None:
+        durs = durations_from_cuts(texts, total)
     if durs is None:
         durs = durations_from_script(script, n, total)
     if durs is None:
@@ -893,6 +933,9 @@ def fill_shots_info(asset, shots_prompt, shots_info, forbid_bgm):
         shot_text = ensure_continuation(shot_text, item["is_first_shots"], last_n)
         item["shot"] = extract_shot_text(shot_text)
         item.pop("shot_body", None)
-    clamp_shot_durations(info, int(asset.get("duration") or 5), asset.get("script") or "")
+    script = asset.get("script") or ""
+    total = resolve_total_duration(script, asset.get("duration"))
+    asset["duration"] = total
+    clamp_shot_durations(info, total, script)
     asset["shots_info"] = info
     return asset
