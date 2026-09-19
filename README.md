@@ -11,9 +11,9 @@
 
 `knowledge/ref-en.txt` 是 MiniMax H3 Ref2VA 全参考模式的提示词格式说明，供分镜拆解使用；格式文档来源 MiniMax H3 官方 Skill，并对其做了少部分修改。
 
-![full.png](doc%2Ffull.png)
-![full_script.png](doc%2Ffull_script.png)
-![full_platform.png](doc%2Ffull_platform.png)
+![full.png](doc/full.png)
+![full_script.png](doc/full_script.png)
+![full_platform.png](doc/full_platform.png)
 
 ## 功能
 
