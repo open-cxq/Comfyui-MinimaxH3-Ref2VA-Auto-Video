@@ -11,6 +11,9 @@ Use a local model or an OpenAI-compatible API to turn a one-line idea or a scrip
 
 `knowledge/ref-en.txt` is the MiniMax H3 Ref2VA full-reference prompt format guide used by shot splitting. The format document originates from MiniMax, and made minor modifications to it.
 
+![full.png](doc%2Ffull.png)
+![full_script.png](doc%2Ffull_script.png)
+![full_platform.png](doc%2Ffull_platform.png)
 
 ## Features
 
