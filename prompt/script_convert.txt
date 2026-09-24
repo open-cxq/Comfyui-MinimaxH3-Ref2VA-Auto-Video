@@ -29,11 +29,22 @@
         "name": "角色名",
         "desc": "中文外貌/身份/性格要点",
         "gen_prompt": "英文白底生图提示词（见规范）",
+        "need_three_view": true,
         "bing_image_path": "",
         "bing_audio_path": ""
       }
     ],
-    "prop": [],
+    "prop": [
+      {
+        "id": 1,
+        "name": "道具名",
+        "desc": "中文外观/用途要点",
+        "gen_prompt": "英文白底道具提示词",
+        "need_three_view": false,
+        "bing_image_path": "",
+        "bing_audio_path": ""
+      }
+    ],
     "scene": [
       {
         "id": 1,
@@ -83,10 +94,13 @@
    - 未上传 background_audio ≠ 无配乐。原文写了配乐就必须写入 `non_diegetic_music`。
    - 仅当媒体路径已提供 background_audio，或用户明确要求无配乐时，`non_diegetic_music` 才写 `N/A`。
 9. global.roles / prop / scene：从全稿去重提取；id 从 1 连续编号。
+   - prop 按「是否需要单独生图参考」判断：仅剧情关键、需特写/单独跟图、或形态会变的物品；纯环境背景写 scene，prop 宁缺毋滥，勿与 scene 重复。
 10. gen_prompt 规范（与资产提取一致）：
    - 人类角色：East Asian（除非剧情明确其他族裔）+ 外观服装 + pure white background, studio backdrop…
    - 动物角色：禁止 East Asian / 人类服装模板；写物种毛色等 + 白底
    - 道具：白底孤立；场景：不要强制白底
+   - need_three_view：人类必须 true；动物 false；道具仅特殊/稀有全貌物品为 true（人类漏写也会被程序强制 true）
+   - need_three_view=true 时 gen_prompt 禁止写三视图/四视图/turnaround 排版要求，程序会自动追加
 11. 媒体路径：若用户输入给出了参考图/音频绝对路径，按内容绑定到最匹配资产；无法判断则 ""；禁止编造路径。
 12. 禁止返回数组顶层；禁止 markdown 代码围栏外的解释文字。
 

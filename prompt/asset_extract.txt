@@ -11,6 +11,7 @@
         "name": "角色名称（人/动物/拟人角色均可）",
         "desc": "外貌、特征、性格（中文可）",
         "gen_prompt": "英文生图提示词（按主体类型写，见下方规范）",
+        "need_three_view": true,
         "bing_image_path": "绑定参考图绝对路径（无则留空）",
         "bing_audio_path": "绑定音色参考音频绝对路径（仅人类角色可能需要；动物通常留空）"
       }
@@ -21,6 +22,7 @@
         "name": "道具名称",
         "desc": "外观、特征、用途",
         "gen_prompt": "英文生图道具提示词",
+        "need_three_view": false,
         "bing_image_path": "",
         "bing_audio_path": ""
       }
@@ -46,6 +48,15 @@
 - 根据参考图/音频内容把路径绑定到最匹配的角色、道具或场景；无法判断则 ""。
 - 禁止编造路径。
 - desc 可用中文；gen_prompt 必须写英文，且尽量详细、可复现，减少随机漂移。
+- roles / prop 必须输出布尔字段 need_three_view：
+  - 人类角色：必须 true（漏写也会被程序强制为 true）。
+  - 动物角色：必须 false。
+  - 道具：仅当必须三视图才能看清全貌的特殊/稀有物品为 true；常见小物为 false。
+- need_three_view=true 时，gen_prompt 只写主体外观/材质/姿态，禁止写入三视图/四视图/turnaround/asset sheet 等排版要求；程序会自动追加三视图提示词。
+- 道具提取按「是否需要单独生图参考」判断，禁止靠物品名称硬套清单：
+  - 应进 prop：推动剧情、需单独特写/参考、或形态会变化且下游要单独跟图的关键物品。
+  - 不应进 prop：仅作为场景环境出现、无单独特写、形态不变、写进 scene 即可的背景陈设。
+  - 拿不准时：优先写进 scene，prop 宁缺毋滥；同一物品不要 scene 与 prop 重复。
 
 ## gen_prompt 写作规范（重要）
 0. 白底（roles / prop）：显式加入 `pure white background, studio backdrop, isolated subject, no environment`
@@ -63,7 +74,7 @@
 
 3. 道具（prop）：
    - 白底孤立主体，写清材质、颜色、尺寸感、新旧、角度；禁止塞入人物、动物脸或复杂场景
-   - 如果人物形象或场景中有该道具，且形态未发生改变，则不需要该道具。
+   - 仅当该物品在分镜里需要「单独一张参考图」时才提取；纯环境背景物写进 scene
 
 4. 场景（scene）：
    - 不要强制白底；写清空间、家具、时间光线、氛围、景别；禁止可识别人脸的具体人物特写

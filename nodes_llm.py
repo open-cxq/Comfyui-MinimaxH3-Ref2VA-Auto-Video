@@ -272,6 +272,16 @@ class MinimaxH3AssetExtract(io.ComfyNode):
                 ),
                 io.Audio.Input("background_audio", display_name="背景音频", optional=True),
                 io.String.Input("prompt", display_name="用户提示词", multiline=True, default=""),
+                io.String.Input(
+                    "three_view_prompt",
+                    display_name="三视图提示词",
+                    multiline=True,
+                    default="",
+                    tooltip=(
+                        "need_three_view=true 的角色/道具会在 gen_prompt 后自动追加此文本。"
+                        "留空则使用内置默认三视图提示词。"
+                    ),
+                ),
                 io.Combo.Input("ratio", display_name="宽高比", options=RATIO_OPTIONS, default="16:9 (Widescreen)"),
                 io.Combo.Input("resolution", display_name="分辨率", options=MEGAPIXELS, default="0.4"),
                 io.Int.Input("duration", display_name="总时长", default=10, min=1, max=600, step=1),
@@ -313,9 +323,10 @@ class MinimaxH3AssetExtract(io.ComfyNode):
         model,
         script,
         prompt,
-        ratio,
-        resolution,
-        duration,
+        three_view_prompt="",
+        ratio="16:9 (Widescreen)",
+        resolution="0.4",
+        duration=10,
         thinking=False,
         seed=0,
         max_length=2048,
@@ -352,7 +363,15 @@ class MinimaxH3AssetExtract(io.ComfyNode):
             max_retries=2,
             **gen_kwargs(thinking, max_length, seed),
         )
-        asset = normalize_asset(data, script, duration, width, height, bg_path)
+        asset = normalize_asset(
+            data,
+            script,
+            duration,
+            width,
+            height,
+            bg_path,
+            three_view_prompt=three_view_prompt,
+        )
         return io.NodeOutput(json.dumps(asset, ensure_ascii=False, indent=2))
 
 
@@ -477,6 +496,16 @@ class MinimaxH3ScriptConverter(io.ComfyNode):
                 ),
                 io.Audio.Input("background_audio", display_name="背景音频", optional=True),
                 io.String.Input("prompt", display_name="用户提示词", multiline=True, default=""),
+                io.String.Input(
+                    "three_view_prompt",
+                    display_name="三视图提示词",
+                    multiline=True,
+                    default="",
+                    tooltip=(
+                        "need_three_view=true 的角色/道具会在 gen_prompt 后自动追加此文本。"
+                        "留空则使用内置默认三视图提示词。"
+                    ),
+                ),
                 io.Combo.Input(
                     "ratio",
                     display_name="宽高比",
@@ -533,6 +562,7 @@ class MinimaxH3ScriptConverter(io.ComfyNode):
         model,
         script,
         prompt="",
+        three_view_prompt="",
         ratio="16:9 (Widescreen)",
         resolution="0.4",
         thinking=False,
@@ -591,6 +621,7 @@ class MinimaxH3ScriptConverter(io.ComfyNode):
             width=width,
             height=height,
             bg_path=bg_path,
+            three_view_prompt=three_view_prompt,
         )
         return io.NodeOutput(
             dumps_board(board),

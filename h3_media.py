@@ -36,6 +36,60 @@ MEGAPIXELS = [
     "1.0", "1.2", "1.5", "1.8", "2.0",
 ]
 CANVAS_MULTIPLE = 32
+THREE_VIEW_PANELS = 4
+# Single turnaround panel golden ratio (width : height).
+GOLDEN_PANEL_W = 9
+GOLDEN_PANEL_H = 16
+GOLDEN_PANEL_RATIO = GOLDEN_PANEL_W / GOLDEN_PANEL_H
+GOLDEN_PANEL_MATCH = 0.08
+VIDEO_LANDSCAPE_RATIO = 16 / 9
+ASSET_GEN_MAX_WIDTH = 4096
+
+
+def _snap_canvas_dim(n, multiple=CANVAS_MULTIPLE):
+    try:
+        mult = max(8, int(multiple or CANVAS_MULTIPLE))
+    except (TypeError, ValueError):
+        mult = CANVAS_MULTIPLE
+    return max(mult, int(round(float(n) / mult) * mult))
+
+
+def _golden_panel_wh(base_w, base_h):
+    """Derive one 9:16 panel from board size (board may be video frame or already golden)."""
+    bw = max(1.0, float(base_w or 512))
+    bh = max(1.0, float(base_h or 512))
+    ratio = bw / bh
+    golden = GOLDEN_PANEL_RATIO
+    if abs(ratio - golden) / golden <= GOLDEN_PANEL_MATCH:
+        return bw, bh
+    if ratio >= VIDEO_LANDSCAPE_RATIO:
+        ph = bh
+        pw = ph * golden
+    else:
+        ph = bh
+        pw = ph * golden
+    return pw, ph
+
+
+def three_view_sheet_wh(base_w, base_h, multiple=CANVAS_MULTIPLE, max_width=ASSET_GEN_MAX_WIDTH):
+    """Four equal 9:16 panels in a row → sheet aspect 9:4 (36:16)."""
+    pw, ph = _golden_panel_wh(base_w, base_h)
+    sw = pw * THREE_VIEW_PANELS
+    sh = ph
+    cap = int(max_width or ASSET_GEN_MAX_WIDTH)
+    if cap > 0 and sw > cap:
+        scale = cap / sw
+        sw = cap
+        sh = max(1.0, sh * scale)
+    return _snap_canvas_dim(sw, multiple), _snap_canvas_dim(sh, multiple)
+
+
+def asset_gen_wh(width, height, need_three_view=False, multiple=CANVAS_MULTIPLE, max_width=ASSET_GEN_MAX_WIDTH):
+    w = _snap_canvas_dim(width or 512, multiple)
+    h = _snap_canvas_dim(height or 512, multiple)
+    if need_three_view:
+        return three_view_sheet_wh(w, h, multiple=multiple, max_width=max_width)
+    return w, h
 
 
 def resolve_wh(ratio, resolution, multiple=CANVAS_MULTIPLE):

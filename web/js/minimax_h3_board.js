@@ -1316,6 +1316,57 @@ function assetGenPrompt(item) {
   return parts.join(", ");
 }
 
+const THREE_VIEW_PANELS = 4;
+const GOLDEN_PANEL_RATIO = 9 / 16;
+const GOLDEN_PANEL_MATCH = 0.08;
+const VIDEO_LANDSCAPE_RATIO = 16 / 9;
+const CANVAS_MULTIPLE = 32;
+const ASSET_GEN_MAX_WIDTH = 4096;
+
+function snapCanvasDim(n, multiple = CANVAS_MULTIPLE) {
+  const mult = Math.max(8, Number(multiple) || CANVAS_MULTIPLE);
+  const v = Math.max(1, Math.round(Number(n) || 512));
+  return Math.max(mult, Math.round(v / mult) * mult);
+}
+
+function goldenPanelWh(baseW, baseH) {
+  const bw = Math.max(1, Number(baseW) || 512);
+  const bh = Math.max(1, Number(baseH) || 512);
+  const ratio = bw / bh;
+  const golden = GOLDEN_PANEL_RATIO;
+  if (Math.abs(ratio - golden) / golden <= GOLDEN_PANEL_MATCH) {
+    return { panelW: bw, panelH: bh };
+  }
+  if (ratio >= VIDEO_LANDSCAPE_RATIO) {
+    const panelH = bh;
+    return { panelW: panelH * golden, panelH };
+  }
+  const panelH = bh;
+  return { panelW: panelH * golden, panelH };
+}
+
+/** Four equal 9:16 panels → sheet 9:4; board size anchors panel scale. */
+function threeViewSheetWh(baseW, baseH) {
+  const { panelW, panelH } = goldenPanelWh(baseW, baseH);
+  let sw = panelW * THREE_VIEW_PANELS;
+  let sh = panelH;
+  if (sw > ASSET_GEN_MAX_WIDTH) {
+    const scale = ASSET_GEN_MAX_WIDTH / sw;
+    sw = ASSET_GEN_MAX_WIDTH;
+    sh = Math.max(1, sh * scale);
+  }
+  return { width: snapCanvasDim(sw), height: snapCanvasDim(sh) };
+}
+
+function assetGenWh(item, baseW, baseH) {
+  const w = snapCanvasDim(baseW);
+  const h = snapCanvasDim(baseH);
+  if (item && item.need_three_view) {
+    return threeViewSheetWh(w, h);
+  }
+  return { width: w, height: h };
+}
+
 function pickImagesFromOutputs(outputs, saveNodeId) {
   if (!outputs || typeof outputs !== "object") return null;
   const keys = [saveNodeId, String(saveNodeId)];
@@ -3495,7 +3546,8 @@ app.registerExtension({
         setGenStatus("正在生成「" + (item.name || key) + "」…", "");
         render();
         try {
-          const path = await runTxt2ImgOnce(node, prompt, state.width, state.height);
+          const wh = assetGenWh(item, state.width, state.height);
+          const path = await runTxt2ImgOnce(node, prompt, wh.width, wh.height);
           if (!path) throw new Error("生成完成但未返回图片路径");
           bustMedia(path);
           item.bing_image_path = path;
@@ -3550,7 +3602,8 @@ app.registerExtension({
               ""
             );
             render();
-            const path = await runTxt2ImgOnce(node, assetGenPrompt(entry.item), state.width, state.height);
+            const wh = assetGenWh(entry.item, state.width, state.height);
+            const path = await runTxt2ImgOnce(node, assetGenPrompt(entry.item), wh.width, wh.height);
             bustMedia(path);
             entry.item.bing_image_path = path;
             persist();

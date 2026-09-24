@@ -798,6 +798,91 @@ def ensure_continuation(shot_text, is_first, last_n):
     return text
 
 
+DEFAULT_THREE_VIEW_PROMPT = (
+    "Generate a character asset sheet consisting of four equal-width panels arranged "
+    "side-by-side from left to right, depicting the same character. Panel 1 is a dedicated "
+    "half-body portrait (bust shot) from a frontal view, showing the head, shoulders, and "
+    "upper chest, composed as a distinct close-up that is not merely a cropped version of "
+    "the full-body front view. Panel 2 is a full-body front view. Panel 3 is a full-body "
+    "side view. Panel 4 is a full-body back view. Ensure that the character's facial "
+    "features, hairstyle, hair accessories, jewelry, body proportions, and clothing are "
+    "completely consistent across all four panels. Each panel maintains the same camera "
+    "height, framing, and lighting. Pure white flat background (RGB 255,255,255), no "
+    "gradients, no shadows, no reflections, no borders, no text, and no labels. Even "
+    "spacing between the four panels; the three full-body figures in Panels 2, 3, and 4 "
+    "are fully presented from head to toe without cropping, while Panel 1 is deliberately "
+    "designed as a half-body portrait."
+)
+
+
+def resolve_three_view_prompt(text):
+    custom = str(text or "").strip()
+    if custom:
+        return custom
+    return DEFAULT_THREE_VIEW_PROMPT
+
+
+def _gen_prompt_has_three_view(gen_prompt, three_view_prompt):
+    base = str(gen_prompt or "").strip()
+    suffix = str(three_view_prompt or "").strip()
+    if not base or not suffix:
+        return False
+    return base.endswith(suffix)
+
+
+def merge_three_view_gen_prompt(gen_prompt, three_view_prompt):
+    base = str(gen_prompt or "").strip()
+    suffix = str(three_view_prompt or "").strip()
+    if not suffix:
+        return base
+    if _gen_prompt_has_three_view(base, suffix):
+        return base
+    if not base:
+        return suffix
+    return base + "\n" + suffix
+
+
+def enforce_need_three_view_flags(g):
+    """Humans always need three-view; animals never. Props keep model flag."""
+    if not isinstance(g, dict):
+        return g
+    for item in g.get("roles") or []:
+        if not isinstance(item, dict):
+            continue
+        kind = _role_kind_label(item)
+        if kind == "person":
+            item["need_three_view"] = True
+        elif kind in ("dog", "animal"):
+            item["need_three_view"] = False
+    return g
+
+
+def finalize_global_assets(g, three_view_prompt=""):
+    enforce_need_three_view_flags(g)
+    apply_three_view_gen_prompts(g, three_view_prompt)
+    return g
+
+
+def apply_three_view_gen_prompts(g, three_view_prompt=""):
+    """Append three-view suffix to gen_prompt when need_three_view is true."""
+    if not isinstance(g, dict):
+        return g
+    tv = resolve_three_view_prompt(three_view_prompt)
+    if not tv:
+        return g
+    for key in ("roles", "prop"):
+        items = g.get(key) or []
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if not bool(item.get("need_three_view")):
+                continue
+            item["gen_prompt"] = merge_three_view_gen_prompt(item.get("gen_prompt"), tv)
+    return g
+
+
 def _script_name_from_text(script):
     text = str(script or "").strip()
     if not text:
@@ -812,7 +897,7 @@ def _script_name_from_text(script):
     return ""
 
 
-def normalize_asset(data, script, duration, width, height, bg_audio_path=""):
+def normalize_asset(data, script, duration, width, height, bg_audio_path="", three_view_prompt=""):
     g = data.get("global") if isinstance(data.get("global"), dict) else {}
     if bg_audio_path and not (g.get("background_audio") or "").strip():
         g["background_audio"] = bg_audio_path
@@ -826,15 +911,19 @@ def normalize_asset(data, script, duration, width, height, bg_audio_path=""):
         for i, item in enumerate(items, start=1):
             if not isinstance(item, dict):
                 continue
-            cleaned.append({
+            row = {
                 "id": int(item.get("id") or i),
                 "name": str(item.get("name") or ""),
                 "desc": str(item.get("desc") or ""),
                 "gen_prompt": str(item.get("gen_prompt") or ""),
                 "bing_image_path": str(item.get("bing_image_path") or ""),
                 "bing_audio_path": str(item.get("bing_audio_path") or ""),
-            })
+            }
+            if key in ("roles", "prop"):
+                row["need_three_view"] = bool(item.get("need_three_view"))
+            cleaned.append(row)
         g[key] = cleaned
+    finalize_global_assets(g, three_view_prompt)
     script_name = str(
         data.get("script_name") or data.get("title") or data.get("name") or ""
     ).strip()

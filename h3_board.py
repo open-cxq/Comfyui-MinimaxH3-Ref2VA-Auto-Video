@@ -34,7 +34,7 @@ def _as_list(value: Any) -> list:
 def _clean_asset_item(item: Any, index: int) -> dict | None:
     if not isinstance(item, dict):
         return None
-    return {
+    row = {
         "id": int(item.get("id") or index),
         "name": str(item.get("name") or "").strip(),
         "desc": str(item.get("desc") or "").strip(),
@@ -46,6 +46,9 @@ def _clean_asset_item(item: Any, index: int) -> dict | None:
             item.get("bing_audio_path") or item.get("audio_path") or ""
         ).strip(),
     }
+    if "need_three_view" in item:
+        row["need_three_view"] = bool(item.get("need_three_view"))
+    return row
 
 
 def _clean_appear(appear: Any) -> dict:
@@ -251,9 +254,11 @@ def finalize_script_convert(
     width: int = 864,
     height: int = 480,
     bg_path: str = "",
+    three_view_prompt: str = "",
 ) -> dict:
     """把 LLM 转换结果规范成看板可用的分镜资产 JSON。"""
     from .h3_parse import (
+        finalize_global_assets,
         build_shot_prompt,
         coerce_global_prompt,
         ensure_continuation,
@@ -295,6 +300,9 @@ def finalize_script_convert(
     data["global"] = g
 
     board = normalize_board_asset(data)
+    g_board = board.get("global") if isinstance(board.get("global"), dict) else {}
+    finalize_global_assets(g_board, three_view_prompt)
+    board["global"] = g_board
     shots = board.get("shots_info") or []
     total = 0
     for i, item in enumerate(shots):
