@@ -274,16 +274,18 @@ def finalize_script_convert(
     if not isinstance(data, dict):
         raise RuntimeError("剧本转换结果无效：需要 JSON 对象。")
 
-    try:
-        w = int(data.get("width") or data.get("with") or width or 864)
-    except (TypeError, ValueError):
-        w = int(width or 864)
-    try:
-        h = int(data.get("height") or height or 480)
-    except (TypeError, ValueError):
-        h = int(height or 480)
-    data["width"] = max(32, w)
+    data.pop("width", None)
     data.pop("with", None)
+    data.pop("height", None)
+    try:
+        w = int(width or 864)
+    except (TypeError, ValueError):
+        w = 864
+    try:
+        h = int(height or 480)
+    except (TypeError, ValueError):
+        h = 480
+    data["width"] = max(32, w)
     data["height"] = max(32, h)
 
     if not str(data.get("script") or "").strip():
@@ -318,7 +320,7 @@ def finalize_script_convert(
             bare = _detailed_body("detailed_description:\n" + bare, sid) or bare
         appear = _clean_appear(item.get("appear"))
         subject_block, appear, last_n = subject_block_for_shot(
-            board, appear, item["is_first_shots"]
+            board, appear, item["is_first_shots"], raw_shot=raw_shot
         )
         item["appear"] = appear
         body = bare.strip()
@@ -340,6 +342,8 @@ def finalize_script_convert(
     elif not board.get("duration"):
         board["duration"] = max(1, int(data.get("duration") or 10))
     board["shots_info"] = shots
+    board["width"] = max(32, w)
+    board["height"] = max(32, h)
     return board
 
 

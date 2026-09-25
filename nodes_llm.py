@@ -594,14 +594,10 @@ class MinimaxH3ScriptConverter(io.ComfyNode):
             )
         question = (
             "用户输入的分镜/剧本原文（格式不固定，请自行理解后转换）：\n%s\n\n用户提示词：\n%s\n\n"
-            "width=%d\nheight=%d\nratio=%s\nresolution=%s MP\n\n%s\n\n媒体路径：\n%s"
+            "%s\n\n媒体路径：\n%s"
             % (
                 raw_script,
                 (prompt or "").strip() or "（空）",
-                width,
-                height,
-                ratio,
-                resolution,
                 bg_rule,
                 catalog,
             )

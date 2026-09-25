@@ -19,8 +19,6 @@
   "script_name": "短标题（4–20字，可从文件名/段标题总结）",
   "script": "给人类看的中文剧情摘要（归纳人物、场景、各段要点与对白大意；不要整段粘贴分镜正文）",
   "duration": 49,
-  "width": 864,
-  "height": 480,
   "shots_prompt": "",
   "global": {
     "roles": [
@@ -99,7 +97,7 @@
    - 人类角色：East Asian（除非剧情明确其他族裔）+ 外观服装 + pure white background, studio backdrop…
    - 动物角色：禁止 East Asian / 人类服装模板；写物种毛色等 + 白底
    - 道具：白底孤立；场景：不要强制白底
-   - need_three_view：人类必须 true；动物 false；道具仅特殊/稀有全貌物品为 true（人类漏写也会被程序强制 true）
+   - need_three_view：人类必须 true；动物 false；道具仅特殊/稀有全貌物品为 true
    - need_three_view=true 时 gen_prompt 禁止写三视图/四视图/turnaround 排版要求，程序会自动追加
 11. 媒体路径：若用户输入给出了参考图/音频绝对路径，按内容绑定到最匹配资产；无法判断则 ""；禁止编造路径。
 12. 禁止返回数组顶层；禁止 markdown 代码围栏外的解释文字。

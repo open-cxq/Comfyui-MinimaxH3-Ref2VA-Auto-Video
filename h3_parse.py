@@ -552,10 +552,19 @@ def last_frame_line(n):
     return LAST_FRAME_TMPL.format(n=n)
 
 
-_ANIMAL_HINT = re.compile(
-    r"(狗|猫|犬|鸟|马|动物|dog|cat|puppy|kitten|animal|retriever|samoyed|wolf)",
-    re.I,
+_SUBJECT_KIND_LINE = re.compile(
+    r"(?is)<Subject\s+\d+>\s+is\s+the\s+(\S+)\s+in\s+<Picture\s+\d+>\s+(.+?)\.",
 )
+
+
+def _parse_subject_kinds_by_name(text):
+    kinds = {}
+    for m in _SUBJECT_KIND_LINE.finditer(str(text or "")):
+        kind = str(m.group(1) or "").strip().lower()
+        name = str(m.group(2) or "").strip()
+        if kind and name and kind not in ("prop", "scene"):
+            kinds[name] = kind
+    return kinds
 
 
 def _identity_for_subject(item, fallback):
@@ -564,19 +573,15 @@ def _identity_for_subject(item, fallback):
     return name or fallback
 
 
-def _role_kind_label(item):
-    blob = " ".join(
-        str((item or {}).get(k) or "")
-        for k in ("name", "desc", "gen_prompt")
-    )
-    if _ANIMAL_HINT.search(blob):
-        if re.search(r"(狗|犬|dog|puppy|retriever|samoyed)", blob, re.I):
-            return "dog"
-        return "animal"
-    return "person"
+def _role_kind_label(item, subject_kinds=None):
+    name = str((item or {}).get("name") or "").strip()
+    if subject_kinds and name in subject_kinds:
+        return subject_kinds[name]
+    return "character"
 
 
-def subject_block_for_shot(asset, appear, is_first):
+def subject_block_for_shot(asset, appear, is_first, raw_shot=""):
+    subject_kinds = _parse_subject_kinds_by_name(raw_shot)
     roles = {int(r["id"]): r for r in (asset.get("global") or {}).get("roles") or [] if "id" in r}
     props = {int(p["id"]): p for p in (asset.get("global") or {}).get("prop") or [] if "id" in p}
     scenes = {int(s["id"]): s for s in (asset.get("global") or {}).get("scene") or [] if "id" in s}
@@ -587,7 +592,7 @@ def subject_block_for_shot(asset, appear, is_first):
     for rid in _ids(appear.get("roles")):
         item = roles.get(rid) or {"name": "role %d" % rid, "desc": ""}
         identity = _identity_for_subject(item, "character")
-        kind = _role_kind_label(item)
+        kind = _role_kind_label(item, subject_kinds)
         lines.append(
             "<Subject %d> is the %s in <Picture %d> %s."
             % (n, kind, n, identity)
@@ -842,23 +847,7 @@ def merge_three_view_gen_prompt(gen_prompt, three_view_prompt):
     return base + "\n" + suffix
 
 
-def enforce_need_three_view_flags(g):
-    """Humans always need three-view; animals never. Props keep model flag."""
-    if not isinstance(g, dict):
-        return g
-    for item in g.get("roles") or []:
-        if not isinstance(item, dict):
-            continue
-        kind = _role_kind_label(item)
-        if kind == "person":
-            item["need_three_view"] = True
-        elif kind in ("dog", "animal"):
-            item["need_three_view"] = False
-    return g
-
-
 def finalize_global_assets(g, three_view_prompt=""):
-    enforce_need_three_view_flags(g)
     apply_three_view_gen_prompts(g, three_view_prompt)
     return g
 
@@ -1016,7 +1005,10 @@ def fill_shots_info(asset, shots_prompt, shots_info, forbid_bgm):
         }
         if not any(appear.values()):
             appear = appear_from_shot_text(asset, bare)
-        subject_block, appear, last_n = subject_block_for_shot(asset, appear, item["is_first_shots"])
+        raw_shot = str(item.get("shot") or raw_body or "")
+        subject_block, appear, last_n = subject_block_for_shot(
+            asset, appear, item["is_first_shots"], raw_shot=raw_shot
+        )
         item["appear"] = appear
         shot_text = build_shot_prompt(subject_block, "[Shot %d] %s" % (sid, bare), item["is_first_shots"])
         shot_text = ensure_continuation(shot_text, item["is_first_shots"], last_n)
