@@ -228,6 +228,45 @@ def unique_input_path(filename: str) -> str:
     return path
 
 
+def import_uploaded_json(text: str, original_name: str = "") -> tuple[str, str]:
+    """Save an uploaded JSON into output/.../data/ so 「加载JSON文件」can actually use it.
+
+    旧实现把上传文件写进 input/h3_ref2va_auto/ 且保留原始文件名：
+    combo 只扫 output/.../data/metadata-*-#####.json，既列不出来，
+    后端 Combo 校验也会报 "value not in list"。这里统一改成可列举的规范命名。
+    """
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError("不是有效的 JSON: %s" % exc) from exc
+    if not isinstance(data, dict):
+        raise ValueError("上传的 JSON 必须是对象（含 script_name / shots_info 等）")
+
+    script_name = str(data.get("script_name") or "").strip()
+    if script_name:
+        slug = slug_script_name(script_name)
+    else:
+        stem = os.path.splitext(os.path.basename(str(original_name or "")))[0]
+        stem = re.sub(r"^metadata-", "", stem, flags=re.IGNORECASE)
+        stem = re.sub(r"-\d{5}$", "", stem)
+        slug = slug_script_name(stem or "uploaded")
+        if slug == "untitled":
+            slug = "uploaded"
+
+    pretty = text if text.endswith("\n") else text + "\n"
+    # O_EXCL 独占创建，避免并发上传/与看板保存撞名后互相覆盖
+    for _ in range(200):
+        path, out_name = next_metadata_path(slug)
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        except FileExistsError:
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(pretty)
+        return os.path.abspath(path), out_name
+    raise RuntimeError("无法分配 JSON 文件名，请清理 data 目录后重试")
+
+
 def next_output_counter(subdir: str, stem: str) -> int:
     """Next 5-digit counter for files like {stem}00001_.png under output/.../{subdir}."""
     mapping = {

@@ -762,6 +762,61 @@ function areaInput(value, onChange, rows = 4) {
   return area;
 }
 
+/**
+ * render() 会 root.innerHTML = "" 全量重建 DOM。输入过程中若被任意一次 render
+ * 打断（输入回调、异步抽帧回写、上传完成…），输入控件会被销毁 → 每敲一个字就失焦。
+ * 这里按「可编辑控件出现顺序」记录/恢复焦点、光标与滚动位置，作为通用兜底。
+ */
+function boardEditableControls(root) {
+  return Array.from(root.querySelectorAll("input, textarea, select")).filter(
+    (ctrl) => ctrl.type !== "file" && ctrl.type !== "hidden"
+  );
+}
+
+function captureBoardFocus(root) {
+  const active = document.activeElement;
+  if (!active || !root || !root.contains(active)) return null;
+  if (!/^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName || "")) return null;
+  const list = boardEditableControls(root);
+  const idx = list.indexOf(active);
+  if (idx < 0) return null;
+  let start = null;
+  let end = null;
+  try {
+    // type=number / checkbox 等访问 selectionStart 会抛 InvalidStateError
+    start = active.selectionStart;
+    end = active.selectionEnd;
+  } catch (_e) {
+    start = end = null;
+  }
+  const scroller = root.querySelector(".h3b-scroll");
+  return { idx, start, end, scrollTop: scroller ? scroller.scrollTop : null };
+}
+
+function restoreBoardFocus(root, snap) {
+  if (!root || !snap) return;
+  const list = boardEditableControls(root);
+  const target = list[snap.idx];
+  if (target && !target.disabled) {
+    try {
+      target.focus({ preventScroll: true });
+      if (
+        snap.start != null &&
+        snap.end != null &&
+        typeof target.setSelectionRange === "function"
+      ) {
+        target.setSelectionRange(snap.start, snap.end);
+      }
+    } catch (_e) {}
+  }
+  if (snap.scrollTop != null) {
+    const scroller = root.querySelector(".h3b-scroll");
+    if (scroller && scroller.scrollTop !== snap.scrollTop) {
+      scroller.scrollTop = snap.scrollTop;
+    }
+  }
+}
+
 function mediaBox(path, kind, onUploaded, onCleared, opts) {
   const compact = !!(opts && opts.compact);
   const box = el("div", "h3b-box" + (compact ? " sm" : "") + (path ? " has" : ""));
@@ -846,9 +901,19 @@ function mediaBox(path, kind, onUploaded, onCleared, opts) {
   return box;
 }
 
-function tileMeta(badgeText, nameText) {
+function tileMeta(badgeText, nameText, opts) {
   const row = el("div", "h3b-tile-meta");
-  row.append(el("div", "h3b-badge", badgeText), el("div", "h3b-tile-name", nameText));
+  const badge = el("div", "h3b-badge", badgeText);
+  const name = el("div", "h3b-tile-name", nameText);
+  // 允许在输入过程中只改标签文字，不必重建整棵看板 DOM
+  if (opts && opts.assetKey) {
+    name.dataset.assetKey = String(opts.assetKey);
+    name.dataset.assetId = String(opts.assetId);
+  }
+  if (opts && opts.shotId != null) {
+    badge.dataset.shotId = String(opts.shotId);
+  }
+  row.append(badge, name);
   return row;
 }
 
@@ -1902,6 +1967,17 @@ async function runTxt2ImgOnce(boardNode, promptText, width, height) {
     );
   }
 
+  // 每次点「生成图片」先换种子：参数完全不变会被 ComfyUI 缓存命中，
+  // 表现为「重新生成」出的还是同一张图。顺带把新值写回画布 widget。
+  const seedCount = bustTxt2ImgSeeds(sub);
+  if (!seedCount) {
+    console.warn(
+      "[H3 Board] 文生图子流程里未找到可刷新的 seed 输入；若图片仍未变化，请把采样器 seed 接成随机数或设为 randomize"
+    );
+  } else {
+    console.info("[H3 Board] 生图前已刷新 " + seedCount + " 个 seed 输入");
+  }
+
   const queued = await queuePromptLocal(0, { output: sub, workflow });
   const promptId = queued.prompt_id || queued.promptId;
   if (!promptId) throw new Error("queuePrompt 未返回 prompt_id");
@@ -1988,6 +2064,60 @@ function bustVideoPromptCaches(sub) {
       }
     }
   }
+}
+
+function freshH3Seed() {
+  // 控制在 1e9 以内：常见 seed 输入的 max 从 2^31 到 2^64 不等，
+  // 取小值可避免个别自定义节点因 "value bigger than max" 校验失败。
+  return Math.floor(Math.random() * 1e9);
+}
+
+/** 把新种子同步到画布上的同名 widget，用户能直观看到「种子确实换了」。 */
+function syncSeedWidgetToGraph(nodeId, key, seed) {
+  const id = String(nodeId);
+  if (id.includes(":")) return; // 子图展开节点在顶层图上没有对应 widget
+  const gnode = graphGetNode(id);
+  if (!gnode || !Array.isArray(gnode.widgets)) return;
+  const w = gnode.widgets.find((x) => x && x.name === key);
+  if (!w) return;
+  w.value = seed;
+  if (w.inputEl) w.inputEl.value = String(seed);
+}
+
+/**
+ * 「生成图片」每次点击都强制换种子。
+ * 局部 prompt 是从 graphToPrompt() 拷出来的，KSampler 的 seed 一直是同一个数字；
+ * 参数完全相同会被 ComfyUI 判定为可缓存，看起来就像点了按钮没有重新生成。
+ */
+function bustTxt2ImgSeeds(sub) {
+  let count = 0;
+  for (const [nid, node] of Object.entries(sub || {})) {
+    if (!node || !node.inputs) continue;
+    for (const key of Object.keys(node.inputs)) {
+      if (!/seed/i.test(String(key))) continue;
+      if (typeof node.inputs[key] !== "number") continue; // 数组=连线，交给上游节点处理
+      const seed = freshH3Seed();
+      node.inputs[key] = seed;
+      syncSeedWidgetToGraph(nid, key, seed);
+      count += 1;
+    }
+  }
+  // seed 来自独立 Seed / 随机数节点时，KSampler.seed 是连线；只刷新该节点的种子类数值输入
+  if (count === 0) {
+    for (const [nid, node] of Object.entries(sub || {})) {
+      if (!node || !node.inputs) continue;
+      if (!/seed/i.test(String(node.class_type || ""))) continue;
+      for (const key of ["seed", "noise_seed", "value", "int"]) {
+        if (!Object.prototype.hasOwnProperty.call(node.inputs, key)) continue;
+        if (typeof node.inputs[key] !== "number") continue;
+        const seed = freshH3Seed();
+        node.inputs[key] = seed;
+        syncSeedWidgetToGraph(nid, key, seed);
+        count += 1;
+      }
+    }
+  }
+  return count;
 }
 
 function forceBundlePromptText(sub, videoNodeId, text) {
@@ -4049,6 +4179,33 @@ app.registerExtension({
         }
       };
 
+      /** 输入素材名称时只同步卡片文字；不调用 render()，否则每敲一个键都会失焦。 */
+      const updateAssetNameLabels = () => {
+        root.querySelectorAll(".h3b-tile-name[data-asset-key]").forEach((label) => {
+          const key = label.getAttribute("data-asset-key");
+          const id = Number(label.getAttribute("data-asset-id"));
+          const item = (state.global[key] || []).find((x) => Number(x.id) === id);
+          if (!item) return;
+          const prefix = (TYPE_META.find((x) => x[0] === key) || [null, "素材"])[1];
+          const text = String(item.name || "").trim() || (prefix + id);
+          if (label.textContent !== text) label.textContent = text;
+        });
+      };
+
+      /** 输入分镜时长时只同步卡片角标，同样避免重建 DOM。 */
+      const updateShotDurationLabels = () => {
+        const shots = state.shots_info || [];
+        root.querySelectorAll(".h3b-tile[data-shot-id]").forEach((tile) => {
+          const id = Number(tile.getAttribute("data-shot-id"));
+          const idx = shots.findIndex((s) => Number(s.id) === id);
+          if (idx < 0) return;
+          const badge = tile.querySelector(".h3b-badge");
+          if (!badge) return;
+          const text = shotKindLabel(shots, idx) + " · " + (shots[idx].duration || 5) + "s";
+          if (badge.textContent !== text) badge.textContent = text;
+        });
+      };
+
       const renderAssetDetail = (host) => {
         const item = selectedAsset
           ? (state.global[selectedAsset.key] || []).find((x) => Number(x.id) === Number(selectedAsset.id))
@@ -4062,7 +4219,8 @@ app.registerExtension({
           if (!item) return;
           item.name = v;
           persist();
-          render();
+          // 只改卡片文字；输入期间绝不重建 DOM
+          updateAssetNameLabels();
         });
         const descIn = areaInput(item ? (item.desc || "") : "", (v) => {
           if (!item) return;
@@ -4159,7 +4317,10 @@ app.registerExtension({
             cover.textContent = item.name || (entry.label + id);
           }
           tile.appendChild(cover);
-          tile.appendChild(tileMeta(entry.label + " #" + id, item.name || (entry.label + id)));
+          tile.appendChild(tileMeta(entry.label + " #" + id, item.name || (entry.label + id), {
+            assetKey: entry.key,
+            assetId: id,
+          }));
           tile.addEventListener("click", () => {
             const set = new Set((appear[entry.key] || []).map(Number));
             if (set.has(id)) set.delete(id);
@@ -4381,7 +4542,7 @@ app.registerExtension({
           if (!shot) return;
           shot.duration = v;
           persist();
-          render();
+          updateShotDurationLabels();
         });
         const bodyIn = areaInput(shot ? extractShotText(shot.shot || "") : "", (v) => {
           if (!shot) return;
@@ -5352,6 +5513,8 @@ app.registerExtension({
       };
 
       const render = () => {
+        // 全量重建前先记下正在编辑的控件，末尾恢复焦点/光标/滚动位置
+        const focusSnap = captureBoardFocus(root);
         if (applyPendingShotVideos(state)) {
           try {
             setWidgetValue(editW, JSON.stringify(state, null, 2));
@@ -5462,7 +5625,10 @@ app.registerExtension({
             cover.textContent = item.name || "无图";
           }
           tile.appendChild(cover);
-          tile.appendChild(tileMeta(entry.label + " #" + item.id, item.name || (entry.label + item.id)));
+          tile.appendChild(tileMeta(entry.label + " #" + item.id, item.name || (entry.label + item.id), {
+            assetKey: entry.key,
+            assetId: item.id,
+          }));
           tile.addEventListener("click", () => {
             selectedAsset = { key: entry.key, id: Number(item.id) };
             render();
@@ -5671,6 +5837,7 @@ app.registerExtension({
         shots.forEach((shot, idx) => {
           const on = Number(shot.id) === Number(selectedShotId);
           const tile = el("div", "h3b-tile" + (on ? " on" : ""));
+          tile.dataset.shotId = String(shot.id);
           const cover = el("div", "h3b-tile-cover");
           const coverPath = String(shot.first_frame_path || "").trim();
           if (coverPath) {
@@ -5695,7 +5862,8 @@ app.registerExtension({
           tile.appendChild(cover);
           tile.appendChild(tileMeta(
             shotKindLabel(shots, idx) + " · " + (shot.duration || 5) + "s",
-            "分镜 #" + shot.id
+            "分镜 #" + shot.id,
+            { shotId: shot.id }
           ));
           tile.addEventListener("click", () => {
             selectedShotId = Number(shot.id);
@@ -5753,6 +5921,7 @@ app.registerExtension({
 
         rendering = false;
         requestAnimationFrame(syncPanel);
+        restoreBoardFocus(root, focusSnap);
       };
 
       node._h3BoardSync = syncPanel;

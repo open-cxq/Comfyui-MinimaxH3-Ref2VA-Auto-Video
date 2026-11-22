@@ -2,7 +2,6 @@
 """HTTP routes for H3 Ref2VA Auto (OpenAI model list + media upload/view)."""
 from __future__ import annotations
 
-import json
 import os
 import time
 import uuid
@@ -19,13 +18,13 @@ from .h3_json_io import (
     PREFIX_MERGE,
     PREFIX_SHOTS,
     SHOTS_STEM,
+    import_uploaded_json,
     input_root,
     input_tmp_dir,
     list_json_files,
     next_output_counter,
     output_images_dir,
     save_metadata_json,
-    unique_input_path,
 )
 from .h3_llm import fetch_openai_model_ids
 
@@ -196,6 +195,7 @@ def register_routes():
 
     @routes.post("/h3_ref2va_auto/upload_json")
     async def upload_json(request):
+        """Import a local JSON into output/.../data/ and return its listable filename."""
         try:
             reader = await request.multipart()
         except Exception as exc:
@@ -214,44 +214,37 @@ def register_routes():
             return web.json_response({"error": "未收到文件"}, status=400)
 
         filename = file_field.filename or "metadata.json"
+        chunks = []
+        size = 0
+        while True:
+            chunk = await file_field.read_chunk()
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > 20 * 1024 * 1024:
+                return web.json_response({"error": "文件过大（上限 20MB）"}, status=400)
+            chunks.append(chunk)
         try:
-            abs_path = os.path.abspath(unique_input_path(filename))
+            # utf-8-sig 兼容带 BOM 的 Windows 记事本 JSON
+            text = b"".join(chunks).decode("utf-8-sig")
+        except UnicodeDecodeError as exc:
+            return web.json_response({"error": "不是有效的 UTF-8 JSON: %s" % exc}, status=400)
+
+        try:
+            abs_path, out_name = import_uploaded_json(text, filename)
         except ValueError as exc:
             return web.json_response({"error": str(exc)}, status=400)
-
-        size = 0
-        with open(abs_path, "wb") as fh:
-            while True:
-                chunk = await file_field.read_chunk()
-                if not chunk:
-                    break
-                size += len(chunk)
-                if size > 20 * 1024 * 1024:
-                    fh.close()
-                    try:
-                        os.remove(abs_path)
-                    except OSError:
-                        pass
-                    return web.json_response({"error": "文件过大（上限 20MB）"}, status=400)
-                fh.write(chunk)
-
-        try:
-            with open(abs_path, "r", encoding="utf-8") as fh:
-                json.loads(fh.read())
-        except Exception:
-            try:
-                os.remove(abs_path)
-            except OSError:
-                pass
-            return web.json_response({"error": "不是有效的 UTF-8 JSON"}, status=400)
+        except Exception as exc:
+            return web.json_response({"error": "保存上传 JSON 失败: %s" % exc}, status=500)
 
         return web.json_response(
             {
                 "error": "",
                 "path": abs_path,
-                "filename": os.path.basename(abs_path),
-                "subfolder": UPLOAD_SUBFOLDER,
-                "type": "input",
+                "filename": out_name,
+                "subfolder": "h3_ref2va_auto/data",
+                "type": "output",
+                "original": os.path.basename(str(filename)),
             }
         )
 

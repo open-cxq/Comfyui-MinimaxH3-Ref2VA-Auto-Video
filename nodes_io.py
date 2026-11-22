@@ -69,7 +69,7 @@ class MinimaxH3LoadJson(io.ComfyNode):
             node_id="MinimaxH3LoadJson",
             display_name="%s 加载JSON文件" % COMPONENT_NAME,
             category=CATEGORY,
-            description="从 output/h3_ref2va_auto/data 选择并加载 metadata JSON（不含 input 上传文件）。",
+            description="从 output/h3_ref2va_auto/data 选择并加载 metadata JSON。节点上的「上传 JSON」会写入同一目录并自动选中。",
             inputs=[
                 io.Combo.Input(
                     "filename",
@@ -77,7 +77,7 @@ class MinimaxH3LoadJson(io.ComfyNode):
                     options=options,
                     default=options[0],
                     socketless=True,
-                    tooltip="选择 data/ 下的 metadata-*.json。可用节点上的「上传 JSON」写入 input（不出现在此列表）。",
+                    tooltip="选择 data/ 下的 metadata-*.json；点「上传 JSON」导入本地文件后会写入该目录、出现在列表并自动选中。",
                 ),
             ],
             outputs=[
