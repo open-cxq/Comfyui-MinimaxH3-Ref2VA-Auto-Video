@@ -885,9 +885,53 @@ async function withH3LocalQueue(fn) {
   }
 }
 
+// ---- CreateVideo 控件错位自愈 ----------------------------------------------
+// ComfyUI core 0.33 → 0.44 给 CreateVideo 依次加了 bit_depth / color_space /
+// chroma_subsampling 三个控件。旧工作流（以及子图里保存的旧副本）的
+// widgets_values 只有 [fps, bit_depth, color_space, codec]，前端按位置回填时
+// 把 codec 的 "none" 挤进了 chroma_subsampling，后端据此报：
+//   chroma_subsampling: 'none' not in ['auto', '444', '422', '420']
+// 这里在「提交前」和「节点载入后」各兜一次，历史工作流无需手动改。
+const H3_CREATE_VIDEO_CHROMA = ["auto", "444", "422", "420"];
+
+function fixCreateVideoChroma(node) {
+  if (!node || String(node.class_type || "") !== "CreateVideo") return false;
+  const inputs = node.inputs;
+  if (!inputs || typeof inputs !== "object") return false;
+  const v = inputs.chroma_subsampling;
+  if (v === undefined || v === null) return false; // 新版默认 auto，不必多写
+  if (Array.isArray(v)) return false; // 已连线，交给上游
+  if (H3_CREATE_VIDEO_CHROMA.includes(String(v))) return false;
+  inputs.chroma_subsampling = "auto";
+  return true;
+}
+
+function sanitizeCreateVideoInPrompt(prompt) {
+  const output = prompt && prompt.output ? prompt.output : prompt;
+  if (!output || typeof output !== "object") return prompt;
+  for (const node of Object.values(output)) {
+    try {
+      fixCreateVideoChroma(node);
+    } catch (_e) {}
+  }
+  return prompt;
+}
+
+function fixCreateVideoWidget(node) {
+  if (!node || String(node.type || "") !== "CreateVideo") return;
+  const w = (node.widgets || []).find((x) => x && x.name === "chroma_subsampling");
+  if (!w) return;
+  if (H3_CREATE_VIDEO_CHROMA.includes(String(w.value))) return;
+  w.value = "auto";
+  try {
+    if (node.setDirtyCanvas) node.setDirtyCanvas(true, true);
+  } catch (_e) {}
+}
+
 async function queuePromptLocal(number, data) {
   return withH3LocalQueue(async () => {
     try {
+      sanitizeCreateVideoInPrompt(data);
       return await api.queuePrompt(number, data);
     } catch (err) {
       throw new Error(formatComfyError(err));
@@ -2234,6 +2278,7 @@ function installH3QueueGuard() {
   h3QueueGuardInstalled = true;
   const origApi = api.queuePrompt.bind(api);
   api.queuePrompt = async function (number, prompt) {
+    sanitizeCreateVideoInPrompt(prompt);
     if (h3LocalQueueDepth > 0) return origApi(number, prompt);
     const board = findScriptBoardNode();
     if (!board || typeof board._h3RunGlobalFilm !== "function" || !boardHasVideoPipeline(board)) {
@@ -3392,6 +3437,10 @@ async function runVideoOnce(boardNode, promptText, width, height, duration, refM
 
 app.registerExtension({
   name: "H3Ref2VAAuto.ScriptBoard",
+  // 载入旧工作流时修正 CreateVideo 的 chroma_subsampling 错位值
+  loadedGraphNode(node) {
+    fixCreateVideoWidget(node);
+  },
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData.name !== NODE_NAME) return;
 
